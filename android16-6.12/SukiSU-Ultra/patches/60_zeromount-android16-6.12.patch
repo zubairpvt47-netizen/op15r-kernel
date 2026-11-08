@@ -2003,7 +2003,7 @@ diff '--color=auto' -ruN '--exclude=.git' work-50-base/fs/zeromount.c work/fs/ze
 diff '--color=auto' -ruN '--exclude=.git' work-50-base/include/linux/zeromount.h work/include/linux/zeromount.h
 --- work-50-base/include/linux/zeromount.h	1970-01-01 01:00:00.000000000 +0100
 +++ work/include/linux/zeromount.h	2026-03-01 06:09:41.416477792 +0100
-@@ -0,0 +1,200 @@
+@@ -0,0 +1,173 @@
 +#ifndef _LINUX_ZEROMOUNT_H
 +#define _LINUX_ZEROMOUNT_H
 +
@@ -2025,53 +2025,26 @@ diff '--color=auto' -ruN '--exclude=.git' work-50-base/include/linux/zeromount.h
 +#define ZM_BLOOM_SHIFT    12
 +#define ZM_BLOOM_MASK     (ZM_BLOOM_BITS - 1)
 +
-+/* Per-task recursion guard using android_oem_data1 bit 0.
-+ * Survives CPU migration -- no preemption constraints needed. */
-+#ifdef CONFIG_ANDROID_VENDOR_OEM_DATA
-+#define ZM_RECURSIVE_BIT 0
++/* Per-task recursion guard in a private thread_info flag bit.
++ * NOT android_oem_data1: OnePlus sched_assist keeps a per-task pointer
++ * there. NOT journal_info: jbd2 owns it. thread_info.flags is a 64-bit
++ * unsigned long on arm64; arch uses bits 0-30, SUSFS uses bit 33. */
++#define TIF_ZEROMOUNT_GUARD 40
 +
 +static inline void zm_enter(void)
 +{
-+	set_bit(ZM_RECURSIVE_BIT,
-+		(unsigned long *)&current->android_oem_data1);
++	set_ti_thread_flag(&current->thread_info, TIF_ZEROMOUNT_GUARD);
 +}
 +
 +static inline void zm_exit(void)
 +{
-+	clear_bit(ZM_RECURSIVE_BIT,
-+		  (unsigned long *)&current->android_oem_data1);
++	clear_ti_thread_flag(&current->thread_info, TIF_ZEROMOUNT_GUARD);
 +}
 +
 +static inline bool zm_is_recursive(void)
 +{
-+	return test_bit(ZM_RECURSIVE_BIT,
-+			(unsigned long *)&current->android_oem_data1);
++	return test_ti_thread_flag(&current->thread_info, TIF_ZEROMOUNT_GUARD);
 +}
-+#else
-+#define ZM_RECURSIVE_MARKER ((void *)0x5A4D)
-+
-+/* Only claim journal_info if it is free — avoids clobbering jbd2 handles
-+ * held by user processes doing ext4 I/O. If already occupied, we treat
-+ * the call as a no-op; zm_is_recursive() returns false so ZeroMount
-+ * proceeds normally, which is safe since the occupied handle means we
-+ * are in a filesystem transaction context where redirection is unwanted. */
-+static inline void zm_enter(void)
-+{
-+	if (!current->journal_info)
-+		current->journal_info = ZM_RECURSIVE_MARKER;
-+}
-+
-+static inline void zm_exit(void)
-+{
-+	if (current->journal_info == ZM_RECURSIVE_MARKER)
-+		current->journal_info = NULL;
-+}
-+
-+static inline bool zm_is_recursive(void)
-+{
-+	return current->journal_info == ZM_RECURSIVE_MARKER;
-+}
-+#endif
 +
 +extern int zeromount_debug_level;
 +

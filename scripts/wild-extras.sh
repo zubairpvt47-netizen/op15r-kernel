@@ -66,8 +66,12 @@ perf_group() {
   # NOTE: file_struct_8bytes_align is intentionally NOT applied: it changes the declared alignment
   # of struct file, which alters the modversions CRC of every symbol touching struct file/path/inode
   # (and the Rust binder bindings), so vendor modules would no longer match the stock ABI.
+  # NOTE: optimise_memcmp is intentionally NOT applied: it rewrites arch/arm64/lib/memcmp.S with
+  # NEON (q0-q5/v0-v5) and no kernel_neon_begin(), which clobbers userspace FP/SIMD state.
+  # (Audited: optimized_mem_operations only touches generic lib/string.c code that arm64 compiles
+  # out; mem_opt_prefetch adds prfm hints; clear_page_16bytes_align adds .p2align. All scalar.)
   for p in optimized_mem_operations reduce_cache_pressure \
-           mem_opt_prefetch optimise_memcmp minimise_wakeup_time int_sqrt \
+           mem_opt_prefetch minimise_wakeup_time int_sqrt \
            reduce_gc_thread_sleep_time add_timeout_wakelocks_globally \
            f2fs_reduce_congestion reduce_freeze_timeout clear_page_16bytes_align \
            add_limitation_scaling_min_freq re_write_limitation_scaling_min_freq \
