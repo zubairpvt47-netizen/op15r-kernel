@@ -212,7 +212,8 @@ jobs:
         [ -s "$PATCH" ] && patch -p1 --no-backup-if-mismatch < "$PATCH" || echo "No 70_ patch needed"
 
     - name: Apply ZeroMount VFS patch (60)
-      if: ${{ (inputs.add_zeromount) && !inputs.clean_baseline }}
+      # ZeroMount hunks sit inside SUSFS context, so it cannot apply without SUSFS
+      if: ${{ inputs.add_zeromount && inputs.add_susfs && inputs.add_ksu && !inputs.clean_baseline }}
       working-directory: ${{ env.KERNEL_ROOT }}/common
       run: patch -p1 -F3 --no-backup-if-mismatch < "$GITHUB_WORKSPACE/$VERSION_DIR/SukiSU-Ultra/patches/60_zeromount-${ANDROID_VER}-${KERNEL_VER}.patch"
 
