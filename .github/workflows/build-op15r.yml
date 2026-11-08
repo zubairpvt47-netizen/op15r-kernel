@@ -316,6 +316,7 @@ jobs:
     - name: Build kernel (Kleaf/Bazel)
       working-directory: ${{ env.KERNEL_ROOT }}
       run: |
+        set -o pipefail   # a failed bazel build must not be masked by the pipe into tee
         BUILD_RC=0
         # prebuilt clang sysroot lacks glibc 2.39 C23 symbols -> link host tools against system libc
         if [ -f common/tools/bpf/resolve_btfids/Makefile ]; then
