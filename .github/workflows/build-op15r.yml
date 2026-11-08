@@ -1,8 +1,9 @@
-name: OnePlus 15R kernel (GKI android16-6.12.69)
+name: OnePlus 15R kernel
 
-# Rebuilds the exact GKI kernel the phone ships (CPH2767_17.0.0.106):
-#   Google kernel/common tag android16-6.12-2026-03_r54  (= commit 242e1a07f878, 6.12.69)
-# and adds SukiSU Ultra (built-in) + enhanced SUSFS + ZeroMount VFS + WildKernels features.
+# Rebuilds the exact GKI kernel the phone ships for a given firmware (Google kernel/common
+# release tag) and adds SukiSU Ultra (built-in) + enhanced SUSFS + ZeroMount VFS + WildKernels
+# features. To target a new firmware, read `uname -r` on the phone (the g<sha> part), find the
+# matching android16-6.12-<YYYY-MM>_r<N> tag and pass it as common_ref / release_branch.
 #
 # Build pipeline adapted from Enginex0/Super-Builders (GPL-3.0); feature patches from
 # WildKernels/kernel_patches.
@@ -11,9 +12,17 @@ on:
   workflow_dispatch:
     inputs:
       common_ref:
-        description: "kernel/common ref to build"
+        description: "kernel/common ref to build (release tag of the phone's current kernel)"
         type: string
         default: "refs/tags/android16-6.12-2026-03_r54"
+      release_branch:
+        description: "Release branch that contains that tag (e.g. android16-6.12-2026-03)"
+        type: string
+        default: "android16-6.12-2026-03"
+      expect_commit:
+        description: "Abort unless kernel/common HEAD starts with this sha (the g<sha> from uname -r; empty = skip)"
+        type: string
+        default: "242e1a07f878"
       add_zeromount:
         description: "ZeroMount VFS driver"
         type: boolean
@@ -48,15 +57,15 @@ permissions:
 
 jobs:
   build:
-    name: "6.12.69 SukiSU Ultra + SUSFS + ZeroMount + Wild"
+    name: "SukiSU Ultra + SUSFS + ZeroMount + Wild"
     runs-on: ubuntu-latest
     timeout-minutes: 240
     env:
       ANDROID_VER: android16
       KERNEL_VER: "6.12"
       VERSION_DIR: android16-6.12
-      MANIFEST_BRANCH: common-android16-6.12-2026-03
-      COMMON_BRANCH: android16-6.12-2026-03
+      MANIFEST_BRANCH: common-${{ inputs.release_branch }}
+      COMMON_BRANCH: ${{ inputs.release_branch }}
       KSU_DIR: KernelSU
 
     steps:
@@ -114,16 +123,21 @@ jobs:
         echo "common HEAD: $(git -C common rev-parse HEAD)"
         grep -E '^(VERSION|PATCHLEVEL|SUBLEVEL) =' common/Makefile
 
-    - name: Verify we have 6.12.69 / 242e1a07f878
+    - name: Verify the source matches the phone's kernel
       working-directory: ${{ env.KERNEL_ROOT }}
+      env:
+        EXPECT_COMMIT: ${{ inputs.expect_commit }}
       run: |
         SL=$(grep '^SUBLEVEL = ' common/Makefile | awk '{print $3}')
         HEAD=$(git -C common rev-parse HEAD)
+        echo "Building Linux $KERNEL_VER.$SL from $HEAD"
         echo "SUBLEVEL=$SL" >> "$GITHUB_ENV"
-        echo "ARTIFACT_BASE=OP15R-6.12.${SL}-SukiSU-SUSFS-ZeroMount-Wild" >> "$GITHUB_ENV"
-        if [ "${{ inputs.common_ref }}" = "refs/tags/android16-6.12-2026-03_r54" ]; then
-          [ "$SL" = "69" ] || { echo "::error::expected sublevel 69, got $SL"; exit 1; }
-          case "$HEAD" in 242e1a07f878*) ;; *) echo "::error::expected commit 242e1a07f878, got $HEAD"; exit 1;; esac
+        echo "ARTIFACT_BASE=OP15R-${KERNEL_VER}.${SL}-SukiSU-SUSFS-ZeroMount-Wild" >> "$GITHUB_ENV"
+        if [ -n "$EXPECT_COMMIT" ]; then
+          case "$HEAD" in
+            "$EXPECT_COMMIT"*) echo "source commit matches $EXPECT_COMMIT" ;;
+            *) echo "::error::expected commit $EXPECT_COMMIT, got $HEAD"; exit 1 ;;
+          esac
         fi
 
     - name: Setup SukiSU Ultra (built-in)
@@ -278,7 +292,7 @@ jobs:
     - name: Package AnyKernel3
       run: |
         cp "$KERNEL_ROOT/bazel-bin/common/kernel_aarch64/Image" "$ANYKERNEL3/Image"
-        sed -i "s|^kernel.string=.*|kernel.string=OP15R GKI 6.12.69 SukiSU Ultra + SUSFS + ZeroMount + Wild|" "$ANYKERNEL3/anykernel.sh"
+        sed -i "s|^kernel.string=.*|kernel.string=OnePlus 15R ${KERNEL_VER}.${SUBLEVEL} - SukiSU Ultra + SUSFS + ZeroMount + Wild|" "$ANYKERNEL3/anykernel.sh"
         mkdir -p out
         cp "$KERNEL_ROOT/bazel-bin/common/kernel_aarch64/Image" out/Image
         (cd "$ANYKERNEL3" && zip -r9 -q "$GITHUB_WORKSPACE/out/${ARTIFACT_BASE}-AnyKernel3.zip" .)
