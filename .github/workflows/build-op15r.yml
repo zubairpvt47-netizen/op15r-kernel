@@ -1,0 +1,325 @@
+name: OnePlus 15R kernel (GKI android16-6.12.69)
+
+# Rebuilds the exact GKI kernel the phone ships (CPH2767_17.0.0.106):
+#   Google kernel/common tag android16-6.12-2026-03_r54  (= commit 242e1a07f878, 6.12.69)
+# and adds SukiSU Ultra (built-in) + enhanced SUSFS + ZeroMount VFS + WildKernels features.
+#
+# Build pipeline adapted from Enginex0/Super-Builders (GPL-3.0); feature patches from
+# WildKernels/kernel_patches.
+
+on:
+  workflow_dispatch:
+    inputs:
+      common_ref:
+        description: "kernel/common ref to build"
+        type: string
+        default: "refs/tags/android16-6.12-2026-03_r54"
+      add_zeromount:
+        description: "ZeroMount VFS driver"
+        type: boolean
+        default: true
+      add_bbg:
+        description: "Baseband Guard"
+        type: boolean
+        default: true
+      wild_perf:
+        description: "WildKernels tuning patches"
+        type: boolean
+        default: true
+      wild_ntsync:
+        description: "NTSync"
+        type: boolean
+        default: true
+      wild_droidspaces:
+        description: "Droidspaces (SYSVIPC/USER_NS with kABI padding)"
+        type: boolean
+        default: true
+      wild_unicode:
+        description: "Unicode bypass fix (experimental)"
+        type: boolean
+        default: true
+      sukisu_commit:
+        description: "SukiSU Ultra commit (empty = pinned default)"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: "6.12.69 SukiSU Ultra + SUSFS + ZeroMount + Wild"
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      ANDROID_VER: android16
+      KERNEL_VER: "6.12"
+      VERSION_DIR: android16-6.12
+      MANIFEST_BRANCH: common-android16-6.12-2026-03
+      COMMON_BRANCH: android16-6.12-2026-03
+      KSU_DIR: KernelSU
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Free disk space
+      run: |
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache \
+          /usr/share/swift /usr/local/share/boost /usr/local/julia* /usr/share/miniconda || true
+        sudo apt-get remove -y -qq '^dotnet-.*' '^llvm-.*' 'php.*' azure-cli google-cloud-cli \
+          microsoft-edge-stable google-chrome-stable firefox powershell mysql-server-core-* postgresql-* >/dev/null 2>&1 || true
+        sudo apt-get autoremove -y -qq >/dev/null 2>&1 || true
+        df -h /
+
+    - name: Install host tools
+      run: sudo apt-get install -y -qq lld binutils jq pigz zip dos2unix
+
+    - name: Fetch helpers (AnyKernel3, WildKernels patches, repo tool)
+      run: |
+        git clone --depth=1 -b gki-2.0 https://github.com/WildKernels/AnyKernel3.git "$GITHUB_WORKSPACE/AnyKernel3"
+        rm -rf "$GITHUB_WORKSPACE/AnyKernel3/.git"
+        git clone --depth=1 https://github.com/WildKernels/kernel_patches.git "$GITHUB_WORKSPACE/kernel_patches"
+        mkdir -p "$GITHUB_WORKSPACE/git-repo"
+        curl -fsSL https://storage.googleapis.com/git-repo-downloads/repo -o "$GITHUB_WORKSPACE/git-repo/repo"
+        chmod +x "$GITHUB_WORKSPACE/git-repo/repo"
+        echo "$GITHUB_WORKSPACE/git-repo" >> "$GITHUB_PATH"
+
+    - name: Setup environment
+      run: |
+        KERNEL_ROOT="$GITHUB_WORKSPACE/$ANDROID_VER-$KERNEL_VER"
+        mkdir -p "$KERNEL_ROOT"
+        {
+          echo "KERNEL_ROOT=$KERNEL_ROOT"
+          echo "DEFCONFIG=$KERNEL_ROOT/common/arch/arm64/configs/gki_defconfig"
+          echo "DEFCONFIG_FRAGMENT=$KERNEL_ROOT/common/arch/arm64/configs/sukisu_gki.fragment"
+          echo "KERNEL_PATCHES=$GITHUB_WORKSPACE/kernel_patches"
+          echo "ANYKERNEL3=$GITHUB_WORKSPACE/AnyKernel3"
+          echo "WILD_REPORT=$GITHUB_WORKSPACE/wild-report.txt"
+          echo "WILD_FRAGMENT=$GITHUB_WORKSPACE/wild-conditional.fragment"
+        } >> "$GITHUB_ENV"
+
+    - name: Sync kernel source (pinned to the phone's exact commit)
+      working-directory: ${{ env.KERNEL_ROOT }}
+      env:
+        COMMON_REF: ${{ inputs.common_ref }}
+      run: |
+        git config --global user.name  "build"
+        git config --global user.email "build@localhost"
+        repo init -u https://android.googlesource.com/kernel/manifest -b "$MANIFEST_BRANCH" --depth=1
+        # Pin ONLY the kernel/common project (the superproject line must stay on the branch).
+        sed -i "/path=\"common\" name=\"kernel\/common\"/s|revision=\"${COMMON_BRANCH}\"|revision=\"${COMMON_REF}\"|" .repo/manifests/default.xml
+        grep 'path="common" name="kernel/common"' .repo/manifests/default.xml
+        repo --trace sync -c -j"$(nproc --all)" --fail-fast --no-tags --force-sync --no-clone-bundle
+        echo "common HEAD: $(git -C common rev-parse HEAD)"
+        grep -E '^(VERSION|PATCHLEVEL|SUBLEVEL) =' common/Makefile
+
+    - name: Verify we have 6.12.69 / 242e1a07f878
+      working-directory: ${{ env.KERNEL_ROOT }}
+      run: |
+        SL=$(grep '^SUBLEVEL = ' common/Makefile | awk '{print $3}')
+        HEAD=$(git -C common rev-parse HEAD)
+        echo "SUBLEVEL=$SL" >> "$GITHUB_ENV"
+        echo "ARTIFACT_BASE=OP15R-6.12.${SL}-SukiSU-SUSFS-ZeroMount-Wild" >> "$GITHUB_ENV"
+        if [ "${{ inputs.common_ref }}" = "refs/tags/android16-6.12-2026-03_r54" ]; then
+          [ "$SL" = "69" ] || { echo "::error::expected sublevel 69, got $SL"; exit 1; }
+          case "$HEAD" in 242e1a07f878*) ;; *) echo "::error::expected commit 242e1a07f878, got $HEAD"; exit 1;; esac
+        fi
+
+    - name: Setup SukiSU Ultra (built-in)
+      working-directory: ${{ env.KERNEL_ROOT }}
+      env:
+        SUKISU_COMMIT: ${{ inputs.sukisu_commit }}
+      run: |
+        curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
+        [ -d "$KERNEL_ROOT/$KSU_DIR" ] || { echo "FATAL: $KSU_DIR not created by setup.sh"; exit 1; }
+        PIN="${SUKISU_COMMIT:-$(cat "$GITHUB_WORKSPACE/$VERSION_DIR/sukisu-pin.txt" 2>/dev/null || true)}"
+        if [ -n "$PIN" ]; then
+          cd "$KERNEL_ROOT/$KSU_DIR"
+          git fetch origin
+          git checkout "$PIN"
+          echo "Pinned SukiSU to $(git rev-parse --short=7 HEAD)"
+        fi
+        cd "$KERNEL_ROOT/common"
+        SUPERCALLS="drivers/kernelsu/supercalls.c"
+        if [ -f "$SUPERCALLS" ]; then
+          sed -i '/ksu_mark_running_process/d' "$SUPERCALLS"
+          if grep -q "vzalloc" "$SUPERCALLS" && ! head -5 "$SUPERCALLS" | grep -q "vmalloc.h"; then
+            sed -i '1a #include <linux/vmalloc.h>' "$SUPERCALLS"
+          fi
+        fi
+
+    - name: Fix old-kernel compatibility helpers
+      working-directory: ${{ env.KERNEL_ROOT }}/common
+      run: |
+        FIX_SCRIPT="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/fix-old-kernel-compat.sh"
+        [ -f "$FIX_SCRIPT" ] && bash "$FIX_SCRIPT" "$KERNEL_ROOT/common" "$SUBLEVEL" || true
+
+    - name: Apply upstream SUSFS patch (50)
+      working-directory: ${{ env.KERNEL_ROOT }}/common
+      run: patch -p1 -F3 --no-backup-if-mismatch < "$GITHUB_WORKSPACE/$VERSION_DIR/SukiSU-Ultra/patches/50_add_susfs_in_gki-${ANDROID_VER}-${KERNEL_VER}.patch"
+
+    - name: Apply enhanced SUSFS patch (51)
+      working-directory: ${{ env.KERNEL_ROOT }}/common
+      run: patch -p1 -F3 --no-backup-if-mismatch < "$GITHUB_WORKSPACE/$VERSION_DIR/SukiSU-Ultra/patches/51_enhanced_susfs-${ANDROID_VER}-${KERNEL_VER}.patch"
+
+    - name: Apply KSU safety patch (70)
+      working-directory: ${{ env.KERNEL_ROOT }}/${{ env.KSU_DIR }}
+      run: |
+        PATCH="$GITHUB_WORKSPACE/$VERSION_DIR/SukiSU-Ultra/patches/70_ksu_safety-sukisu-${KERNEL_VER}.patch"
+        [ -s "$PATCH" ] && patch -p1 --no-backup-if-mismatch < "$PATCH" || echo "No 70_ patch needed"
+
+    - name: Apply ZeroMount VFS patch (60)
+      if: inputs.add_zeromount
+      working-directory: ${{ env.KERNEL_ROOT }}/common
+      run: patch -p1 -F3 --no-backup-if-mismatch < "$GITHUB_WORKSPACE/$VERSION_DIR/SukiSU-Ultra/patches/60_zeromount-${ANDROID_VER}-${KERNEL_VER}.patch"
+
+    - name: Fix SUSFS compatibility
+      working-directory: ${{ env.KERNEL_ROOT }}/common
+      run: |
+        FIX="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/fix-susfs-compat.sh"
+        [ -f "$FIX" ] && bash "$FIX" . "$SUBLEVEL" "$ANDROID_VER" "$KERNEL_VER" "$KERNEL_PATCHES" || true
+
+    - name: Apply WildKernels feature patches
+      working-directory: ${{ env.KERNEL_ROOT }}/common
+      env:
+        WILD_PERF: ${{ inputs.wild_perf }}
+        WILD_NTSYNC: ${{ inputs.wild_ntsync }}
+        WILD_DROIDSPACES: ${{ inputs.wild_droidspaces }}
+        WILD_UNICODE: ${{ inputs.wild_unicode }}
+      run: bash "$GITHUB_WORKSPACE/scripts/wild-extras.sh" . "$KERNEL_PATCHES" "$WILD_FRAGMENT" "$WILD_REPORT"
+
+    - name: Setup Baseband Guard
+      if: inputs.add_bbg
+      working-directory: ${{ env.KERNEL_ROOT }}
+      run: bash "$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/setup-bbg.sh" . "$DEFCONFIG" "$DEFCONFIG_FRAGMENT"
+
+    - name: Configure kernel
+      working-directory: ${{ env.KERNEL_ROOT }}
+      run: |
+        FRAGMENT="$GITHUB_WORKSPACE/$VERSION_DIR/defconfig.fragment"
+        HELPERS="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers"
+        # no build/build.sh on 6.12 -> Kleaf; ZRAM stays a module like stock, so no --zram
+        bash "$HELPERS/assemble-defconfig.sh" "$FRAGMENT" "$DEFCONFIG_FRAGMENT" "$DEFCONFIG" --susfs --overlayfs --wild --kleaf
+
+        # features whose patches applied cleanly
+        if [ -s "$WILD_FRAGMENT" ]; then cat "$WILD_FRAGMENT" >> "$DEFCONFIG_FRAGMENT"; fi
+        # ZeroMount config (only if its patch was applied)
+        if [ "${{ inputs.add_zeromount }}" = "true" ]; then
+          grep -rh '^config ZEROMOUNT' --include='Kconfig*' common/ 2>/dev/null | head -3 || true
+        fi
+
+        # drop CONFIG_KSU_* symbols that don't exist in this tree
+        while IFS='=' read -r cfg _; do
+          symbol="${cfg#CONFIG_}"
+          grep -Rqx "config ${symbol}" common/ ${KSU_DIR:+$KSU_DIR/} --include='Kconfig*' 2>/dev/null && continue
+          sed -i "/^${cfg}=/d" "$DEFCONFIG_FRAGMENT" "$DEFCONFIG"
+        done < <(grep '^CONFIG_KSU_' "$DEFCONFIG_FRAGMENT" 2>/dev/null || true)
+        if ! grep -q '^CONFIG_KSU_SUSFS=' "$DEFCONFIG_FRAGMENT" 2>/dev/null; then
+          sed -i '/^CONFIG_KSU_SUSFS_/d' "$DEFCONFIG_FRAGMENT" "$DEFCONFIG"
+        fi
+
+        # always keep module vermagic flags identical to stock: SMP preempt mod_unload modversions
+        sed -i '/^CONFIG_MODVERSIONS=/d;/^CONFIG_MODULE_UNLOAD=/d;/^CONFIG_PREEMPT=/d' "$DEFCONFIG_FRAGMENT"
+
+        bash "$HELPERS/bypass-abi-check.sh" . "$ANDROID_VER" "$KERNEL_VER"
+
+        echo "----- final fragment -----"
+        cat "$DEFCONFIG_FRAGMENT"
+
+    - name: Module check bypass (CRC) + protected exports cleanup
+      working-directory: ${{ env.KERNEL_ROOT }}
+      run: |
+        TARGET_FILE="$KERNEL_ROOT/common/kernel/module/version.c"
+        sed -i '/bad_version:/{:a;n;/return 0;/{s/return 0;/return 1;/;b};ba}' "$TARGET_FILE"
+        rm -f common/android/abi_gki_protected_exports_* || true
+        sed -i 's/protected_modules = \[.*\]/protected_modules = []/' common/modules.bzl || true
+
+    - name: Clean build flags
+      working-directory: ${{ env.KERNEL_ROOT }}
+      run: bash "$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/clean-build-flags.sh" . "$KERNEL_VER" "SukiSU"
+
+    - name: Build kernel (Kleaf/Bazel)
+      working-directory: ${{ env.KERNEL_ROOT }}
+      run: |
+        BUILD_RC=0
+        # prebuilt clang sysroot lacks glibc 2.39 C23 symbols -> link host tools against system libc
+        if [ -f common/tools/bpf/resolve_btfids/Makefile ]; then
+          echo 'override KBUILD_HOSTLDFLAGS += --sysroot=/' >> common/tools/bpf/resolve_btfids/Makefile
+          echo 'override LDFLAGS += --sysroot=/' >> common/tools/bpf/resolve_btfids/Makefile
+        fi
+        tools/bazel build --config=fast --lto=none \
+          --defconfig_fragment=//common:arch/arm64/configs/sukisu_gki.fragment \
+          //common:kernel_aarch64_dist 2>&1 | tee "$GITHUB_WORKSPACE/bazel-build.log" || BUILD_RC=${PIPESTATUS[0]}
+        if [ "$BUILD_RC" -ne 0 ]; then
+          if [ -f bazel-bin/common/kernel_aarch64/Image ]; then
+            echo "::warning::Build exited $BUILD_RC but Image exists"
+          else
+            exit "$BUILD_RC"
+          fi
+        fi
+
+    - name: Verify the built kernel
+      working-directory: ${{ env.KERNEL_ROOT }}
+      run: |
+        IMG=bazel-bin/common/kernel_aarch64/Image
+        [ -f "$IMG" ] || { echo "::error::Image not found"; find . -name Image -type f | head; exit 1; }
+        ls -l "$IMG"
+        sha256sum "$IMG"
+        echo "--- version string:"
+        strings -n 20 "$IMG" | grep -m1 'Linux version' || true
+        echo "--- key features present in the binary:"
+        for s in susfs zeromount kernelsu baseband_guard ntsync; do
+          printf '%-16s %s\n' "$s" "$(strings "$IMG" | grep -ci "$s")"
+        done
+        echo "--- vermagic flags in binary:"
+        strings "$IMG" | grep -m2 'SMP preempt' || true
+
+    - name: Package AnyKernel3
+      run: |
+        cp "$KERNEL_ROOT/bazel-bin/common/kernel_aarch64/Image" "$ANYKERNEL3/Image"
+        sed -i "s|^kernel.string=.*|kernel.string=OP15R GKI 6.12.69 SukiSU Ultra + SUSFS + ZeroMount + Wild|" "$ANYKERNEL3/anykernel.sh"
+        mkdir -p out
+        cp "$KERNEL_ROOT/bazel-bin/common/kernel_aarch64/Image" out/Image
+        (cd "$ANYKERNEL3" && zip -r9 -q "$GITHUB_WORKSPACE/out/${ARTIFACT_BASE}-AnyKernel3.zip" .)
+        cp "$WILD_REPORT" out/wild-report.txt 2>/dev/null || true
+        cp "$DEFCONFIG_FRAGMENT" out/final-config.fragment 2>/dev/null || true
+        (cd out && sha256sum * > SHA256SUMS.txt)
+        ls -l out
+
+    - name: Collect patch rejects
+      if: always()
+      run: |
+        mkdir -p patch-rejects
+        find "$KERNEL_ROOT" -type f -name '*.rej' -print0 2>/dev/null | while IFS= read -r -d '' f; do
+          rel="${f#"$KERNEL_ROOT"/}"; mkdir -p "patch-rejects/$(dirname "$rel")"; cp "$f" "patch-rejects/$rel"
+        done
+        [ -f "$WILD_REPORT" ] && cp "$WILD_REPORT" patch-rejects/ || true
+        [ -f "$GITHUB_WORKSPACE/bazel-build.log" ] && tail -n 400 "$GITHUB_WORKSPACE/bazel-build.log" > patch-rejects/bazel-tail.log || true
+
+    - name: Upload kernel
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.ARTIFACT_BASE }}
+        path: out/*
+        if-no-files-found: error
+        compression-level: 6
+
+    - name: Upload diagnostics
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: diagnostics
+        path: patch-rejects/
+        if-no-files-found: ignore
+
+    - name: Job summary
+      if: always()
+      run: |
+        {
+          echo "## OP15R kernel 6.12.${SUBLEVEL:-?}"
+          echo ""
+          echo '```'
+          cat "$WILD_REPORT" 2>/dev/null || echo "(no wild report)"
+          echo '```'
+        } >> "$GITHUB_STEP_SUMMARY"
