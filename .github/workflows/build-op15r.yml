@@ -247,6 +247,30 @@ jobs:
         if [ -f "$DIR/kernel/Kbuild" ]; then
           sed -i 's/$(error "KernelSU requires either CONFIG_KPROBES=y or CONFIG_KSU_SUSFS=y")/$(warning "KernelSU requires either CONFIG_KPROBES=y or CONFIG_KSU_SUSFS=y")/' "$DIR/kernel/Kbuild"
         fi
+        # SukiSU builtin (1cfa5734) calls the SUSFS priority-uid-filter API, but its Kconfig predates
+        # the symbol that guards the prototype in linux/susfs.h, so the calls fail as implicit
+        # declarations. Define the symbol in the cloned tree (the SUSFS pin already implements it).
+        if [ "$VARIANT" = "sukisu" ] && [ -f "$DIR/kernel/Kconfig" ]; then
+          python3 - "$DIR/kernel/Kconfig" <<'PYEOF'
+        import sys
+        p = sys.argv[1]
+        s = open(p, encoding='utf-8').read()
+        if 'KSU_SUSFS_PRIORITY_UID_FILTER' in s:
+            print('Kconfig already defines KSU_SUSFS_PRIORITY_UID_FILTER')
+            raise SystemExit(0)
+        block = """
+        config KSU_SUSFS_PRIORITY_UID_FILTER
+            bool "KernelSU addon - SUSFS priority uid filter"
+            depends on KSU_SUSFS
+            default y
+        """
+        idx = s.find('\nendmenu')
+        if idx < 0:
+            sys.exit('KernelSU Kconfig: endmenu anchor not found')
+        open(p, 'w', encoding='utf-8').write(s[:idx] + block + s[idx:])
+        print('added CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER to the SukiSU Kconfig')
+        PYEOF
+        fi
         ls -l common/drivers/kernelsu
 
     - name: LSM slots (MAX_LSM_COUNT) / SukiSU LSM registration
@@ -269,6 +293,28 @@ jobs:
         print('lsm_mode=skip: SukiSU LSM registration removed (mount-hide file_permission hook lost)')
         PYEOF
           else
+            # Linux 6.12 takes const struct lsm_id *, not the LSM name string. The slot is still
+            # needed (security_add_hooks consumes one), so patch the call site instead of skipping.
+            python3 - "$KSU_DIR/kernel/hook/lsm_hook.c" <<'PYEOF'
+        import sys
+        p = sys.argv[1]
+        s = open(p, encoding='utf-8').read()
+        if 'ksu_lsmid' in s:
+            print('SukiSU LSM registration already patched for 6.12')
+            raise SystemExit(0)
+        old = '#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)\n    security_add_hooks(ksu_hooks, ARRAY_SIZE(ksu_hooks), "ksu");\n#else\n'
+        new = '#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0)\n    security_add_hooks(ksu_hooks, ARRAY_SIZE(ksu_hooks), &ksu_lsmid);\n#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)\n    security_add_hooks(ksu_hooks, ARRAY_SIZE(ksu_hooks), "ksu");\n#else\n'
+        if s.count(old) != 1:
+            sys.exit('lsm_hook.c: 4.11+ security_add_hooks block not found exactly once')
+        s = s.replace(old, new, 1)
+        anchor = 'static struct security_hook_list ksu_hooks[] = {'
+        if s.count(anchor) != 1:
+            sys.exit('lsm_hook.c: ksu_hooks[] anchor not found exactly once')
+        decl = '#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0)\nstatic struct lsm_id ksu_lsmid = { .name = "ksu", .id = LSM_ID_UNDEF };\n#endif\n\n'
+        s = s.replace(anchor, decl + anchor, 1)
+        open(p, 'w', encoding='utf-8').write(s)
+        print('patched SukiSU LSM registration for kernel 6.12 (struct lsm_id)')
+        PYEOF
             SLOTS+=(KSU=CONFIG_KSU)
           fi
         else
