@@ -24,9 +24,9 @@ on:
         type: string
         default: "242e1a07f878"
       add_zeromount:
-        description: "ZeroMount VFS driver (patch 60 was written for the old SUSFS 2.0 stack; re-port pending)"
+        description: "ZeroMount VFS driver (patch 60 is ported to the SukiSU SUSFS pin; ksu_variant=sukisu only)"
         type: boolean
-        default: false
+        default: true
       add_bbg:
         description: "Baseband Guard"
         type: boolean
@@ -324,10 +324,12 @@ jobs:
         rm -f "$P"
 
     - name: Apply ZeroMount VFS patch (60)
-      # ZeroMount hunks sit inside SUSFS context, so it cannot apply without SUSFS
+      # ZeroMount hunks sit inside SUSFS context, so it cannot apply without SUSFS. The patch is
+      # generated against the SukiSU SUSFS pin (68f62fae) and applied with NO fuzz: with fuzz the
+      # old patch silently landed hooks inside comments (dead code) and after-the-fact (task_mmu).
       if: ${{ inputs.add_zeromount && inputs.add_susfs && inputs.add_ksu && !inputs.clean_baseline }}
       working-directory: ${{ env.KERNEL_ROOT }}/common
-      run: patch -p1 -F3 --no-backup-if-mismatch < "$GITHUB_WORKSPACE/$VERSION_DIR/SukiSU-Ultra/patches/60_zeromount-${ANDROID_VER}-${KERNEL_VER}.patch"
+      run: patch -p1 -F0 --no-backup-if-mismatch < "$GITHUB_WORKSPACE/$VERSION_DIR/SukiSU-Ultra/patches/60_zeromount-${ANDROID_VER}-${KERNEL_VER}.patch"
 
     - name: Fix SUSFS compatibility
       if: ${{ !inputs.clean_baseline && inputs.add_susfs && inputs.add_ksu }}
@@ -378,8 +380,9 @@ jobs:
           echo "SUSFS profile: core"
         fi
         # ZeroMount config (only if its patch was applied)
-        if [ "${{ inputs.add_zeromount }}" = "true" ]; then
-          grep -rh '^config ZEROMOUNT' --include='Kconfig*' common/ 2>/dev/null | head -3 || true
+        if [ "${{ inputs.add_zeromount }}" = "true" ] && grep -q '^config ZEROMOUNT' common/fs/Kconfig; then
+          sed -i '/^CONFIG_ZEROMOUNT=/d;/^# CONFIG_ZEROMOUNT is not set/d' "$DEFCONFIG_FRAGMENT"
+          echo "CONFIG_ZEROMOUNT=y" >> "$DEFCONFIG_FRAGMENT"
         fi
 
         # drop CONFIG_KSU_* symbols that don't exist in this tree
