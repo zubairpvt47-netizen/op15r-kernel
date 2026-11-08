@@ -7,7 +7,7 @@ FRAGMENT="${3:-}"
 
 cd "$KERNEL_ROOT"
 curl -fLsS --retry 6 --retry-all-errors --retry-delay 8 -o /tmp/bbg-setup.sh \
-  https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh
+  https://raw.githubusercontent.com/vc-teahouse/Baseband-guard/main/setup.sh
 bash /tmp/bbg-setup.sh
 if [ -n "$FRAGMENT" ]; then
   echo "CONFIG_BBG=y" >> "$FRAGMENT"
