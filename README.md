@@ -40,8 +40,8 @@ New firmware gets a new row. Builds for older firmware stay listed so you can ma
 ### Root and hiding
 | | |
 |---|---|
-| **SukiSU Ultra** | Built into the kernel at a pinned commit. No LKM or `init_boot` patch needed. |
-| **Enhanced SUSFS** | Mount hiding, kstat spoofing and redirect, map hiding, uname and cmdline/bootconfig spoofing, open redirect, symbol hiding, Unicode filter, auto-hide of KSU default and bind mounts. |
+| **SukiSU Ultra** or **KernelSU-Next** | Built into the kernel at a pinned commit (`ksu_variant`): SukiSU Ultra `builtin` branch (works with the v4.3.x manager) or KernelSU-Next `dev-susfs`. No LKM or `init_boot` patch needed. |
+| **SUSFS** | Upstream susfs4ksu (v2.3 with SukiSU, v2.4 with KernelSU-Next): path, mount, kstat and map hiding, uname and cmdline/bootconfig spoofing, open redirect, symbol hiding. |
 | **ZeroMount VFS** | Systemless path redirection at the VFS layer: `getname()` redirection, directory-entry injection, `d_path`/xattr/`statfs` spoofing, bloom-filter lookup, ioctl control interface. |
 | **Baseband Guard** | Security module that blocks writes to critical baseband/modem block devices. |
 
@@ -90,8 +90,8 @@ New firmware gets a new row. Builds for older firmware stay listed so you can ma
 Each build runs these steps in order:
 
 1. **Sync** Google's `kernel/common` at the exact release tag of the phone's kernel, and verify the commit.
-2. **SukiSU Ultra** is added as a built-in at a pinned commit.
-3. **SUSFS** patches (upstream, enhanced, and a KSU safety fix) are applied.
+2. **SukiSU Ultra** or **KernelSU-Next** is added as a built-in at a pinned commit, and the kernel gets extra LSM slots so it (and Baseband Guard) can register without displacing a stock LSM.
+3. The pinned upstream **SUSFS** patch is applied with WildKernels' compatibility helpers.
 4. **ZeroMount** is applied on top.
 5. **WildKernels** feature groups are applied one by one, each rolled back if any of its patches fails.
 6. **Baseband Guard** and the Kconfig fragment are added.
@@ -170,10 +170,10 @@ or flash your saved `boot` image from recovery. The kernel zip only rewrites the
 ```
 .github/workflows/build-op15r.yml   single-job pipeline: sync, patch, configure, build, package
 android16-6.12/
-  SukiSU-Ultra/patches/             SUSFS, enhanced SUSFS, ZeroMount, KSU safety patches
-  build-helpers/                    config assembly, ABI-check bypass, build-flag and BBG helpers
+  SukiSU-Ultra/patches/             ZeroMount VFS patch (re-port to SUSFS 2.3/2.4 pending)
+  build-helpers/                    config assembly, ABI-check bypass, LSM-slot, build-flag and BBG helpers
   defconfig.fragment                base / susfs / overlayfs / wild Kconfig sections
-  sukisu-pin.txt                    pinned SukiSU Ultra commit
+  root-pins.env                     pinned SukiSU Ultra (builtin) / KernelSU-Next (dev-susfs) + SUSFS commits
 scripts/wild-extras.sh              atomic WildKernels patch groups with rollback and report
 tools/repack_boot.py                builds a test-bootable image from a new kernel
 ```
@@ -190,7 +190,9 @@ with OnePlus, Google, or any project credited below.
 |---|---|
 | [Android Common Kernel](https://android.googlesource.com/kernel/common) (Google) | Base source |
 | [SukiSU-Ultra](https://github.com/SukiSU-Ultra/SukiSU-Ultra) | Root solution |
+| [KernelSU-Next](https://github.com/KernelSU-Next/KernelSU-Next) ([pershoot dev-susfs](https://github.com/pershoot/KernelSU-Next)) | Root solution (alternative) |
 | [susfs4ksu](https://gitlab.com/simonpunk/susfs4ksu) (simonpunk) | SUSFS |
+| [WildKernels/GKI_KernelSU_SUSFS](https://github.com/WildKernels/GKI_KernelSU_SUSFS) | Root/SUSFS pin pairs and SUSFS compatibility scripts |
 | [Enginex0/Super-Builders](https://github.com/Enginex0/Super-Builders) and [ZeroMount](https://github.com/enginex0/zeromount) | Enhanced SUSFS, ZeroMount, build pipeline |
 | [WildKernels](https://github.com/WildKernels) | Feature patches, AnyKernel3 |
 | [Baseband-guard](https://github.com/vc-teahouse/Baseband-guard) | Baseband Guard module |
