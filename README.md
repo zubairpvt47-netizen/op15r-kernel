@@ -63,14 +63,14 @@ New firmware gets a new row. Builds for older firmware stay listed so you can ma
 | **Unicode bypass fix** | WildKernels' fix (marked experimental upstream). |
 
 ### Performance and tuning
-24 WildKernels patches for memory, scheduling and power, CPU frequency, storage, networking and log noise.
+23 WildKernels patches for memory, scheduling and power, CPU frequency, storage, networking and log noise.
 
 <details>
 <summary>Show the patch list</summary>
 
 | Area | Patches |
 |---|---|
-| Memory | `optimized_mem_operations`, `optimise_memcmp`, `clear_page_16bytes_align`, `mem_opt_prefetch`, `file_struct_8bytes_align`, `reduce_cache_pressure`, `int_sqrt` |
+| Memory | `optimized_mem_operations`, `optimise_memcmp`, `clear_page_16bytes_align`, `mem_opt_prefetch`, `reduce_cache_pressure`, `int_sqrt` |
 | Scheduler / power | `minimise_wakeup_time`, `adjust_cpu_scan_order`, `disable_cache_hot_buddy`, `avoid_extra_s2idle_wake_attempts`, `reduce_pci_pme_wakeups`, `reduce_freeze_timeout`, `add_timeout_wakelocks_globally` |
 | CPU frequency | `add_limitation_scaling_min_freq`, `re_write_limitation_scaling_min_freq`, `use_unlikely_wrap_cpufreq` |
 | Storage | `f2fs_reduce_congestion`, `f2fs_enlarge_min_fsync_blocks`, `reduce_gc_thread_sleep_time`, `increase_ext4_default_commit_age` |
@@ -83,6 +83,7 @@ New firmware gets a new row. Builds for older firmware stay listed so you can ma
 - **HMBird/SCX scheduler** and **BBRv3**: the WildKernels 15R config leaves both off too.
 - **OnePlus vendor-module blacklisting and `fake_config`**: these belong to OnePlus' own kernel tree, not GKI.
 - **ZRAM LZ4K/LZ4KD**: ZRAM is a module on the stock kernel and stays one.
+- **`file_struct_8bytes_align`**: it changes the ABI checksum of `struct file`, which would affect vendor modules.
 
 ## How it works
 

@@ -203,6 +203,12 @@ jobs:
         WILD_UNICODE: ${{ inputs.wild_unicode }}
       run: bash "$GITHUB_WORKSPACE/scripts/wild-extras.sh" . "$KERNEL_PATCHES" "$WILD_FRAGMENT" "$WILD_REPORT"
 
+    - name: Fail on patch rejects
+      run: |
+        REJ=$(find "$KERNEL_ROOT/common" "$KERNEL_ROOT/$KSU_DIR" \( -name '*.rej' -o -name '*.orig' \) 2>/dev/null | head -20)
+        if [ -n "$REJ" ]; then echo "::error::patch rejects found:"; echo "$REJ"; exit 1; fi
+        echo "no patch rejects"
+
     - name: Setup Baseband Guard
       if: inputs.add_bbg
       working-directory: ${{ env.KERNEL_ROOT }}

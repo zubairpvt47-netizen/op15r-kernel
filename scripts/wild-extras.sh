@@ -63,7 +63,10 @@ group() {
 perf_group() {
   local ok=0
   # Each tuning patch is independent; one failing does not sink the others.
-  for p in optimized_mem_operations file_struct_8bytes_align reduce_cache_pressure \
+  # NOTE: file_struct_8bytes_align is intentionally NOT applied: it changes the declared alignment
+  # of struct file, which alters the modversions CRC of every symbol touching struct file/path/inode
+  # (and the Rust binder bindings), so vendor modules would no longer match the stock ABI.
+  for p in optimized_mem_operations reduce_cache_pressure \
            mem_opt_prefetch optimise_memcmp minimise_wakeup_time int_sqrt \
            reduce_gc_thread_sleep_time add_timeout_wakelocks_globally \
            f2fs_reduce_congestion reduce_freeze_timeout clear_page_16bytes_align \
