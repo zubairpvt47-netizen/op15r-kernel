@@ -51,6 +51,14 @@ on:
         description: "SukiSU Ultra commit (empty = pinned default)"
         type: string
         default: ""
+      add_ksu:
+        description: "SukiSU Ultra built into the kernel (off = root only via external LKM)"
+        type: boolean
+        default: true
+      add_susfs:
+        description: "SUSFS kernel patches (needs add_ksu; off = isolation build)"
+        type: boolean
+        default: true
       clean_baseline:
         description: "CONTROL BUILD: no SukiSU/SUSFS/ZeroMount/Wild/BBG at all (stock source rebuilt)"
         type: boolean
@@ -143,7 +151,10 @@ jobs:
         if [ "${{ inputs.clean_baseline }}" = "true" ]; then
           echo "ARTIFACT_BASE=OP15R-${KERNEL_VER}.${SL}-CLEAN-infra-${{ inputs.infra_tweaks }}" >> "$GITHUB_ENV"
         else
-          echo "ARTIFACT_BASE=OP15R-${KERNEL_VER}.${SL}-SukiSU-SUSFS-ZeroMount-Wild" >> "$GITHUB_ENV"
+          SUF=""
+          [ "${{ inputs.add_ksu }}" = "true" ] || SUF="$SUF-noksu"
+          [ "${{ inputs.add_susfs }}" = "true" ] || SUF="$SUF-nosusfs"
+          echo "ARTIFACT_BASE=OP15R-${KERNEL_VER}.${SL}-SukiSU-SUSFS-ZeroMount-Wild${SUF}" >> "$GITHUB_ENV"
         fi
         if [ -n "$EXPECT_COMMIT" ]; then
           case "$HEAD" in
@@ -153,7 +164,7 @@ jobs:
         fi
 
     - name: Setup SukiSU Ultra (built-in)
-      if: ${{ !inputs.clean_baseline }}
+      if: ${{ !inputs.clean_baseline && inputs.add_ksu }}
       working-directory: ${{ env.KERNEL_ROOT }}
       env:
         SUKISU_COMMIT: ${{ inputs.sukisu_commit }}
@@ -184,17 +195,17 @@ jobs:
         [ -f "$FIX_SCRIPT" ] && bash "$FIX_SCRIPT" "$KERNEL_ROOT/common" "$SUBLEVEL" || true
 
     - name: Apply upstream SUSFS patch (50)
-      if: ${{ !inputs.clean_baseline }}
+      if: ${{ !inputs.clean_baseline && inputs.add_susfs && inputs.add_ksu }}
       working-directory: ${{ env.KERNEL_ROOT }}/common
       run: patch -p1 -F3 --no-backup-if-mismatch < "$GITHUB_WORKSPACE/$VERSION_DIR/SukiSU-Ultra/patches/50_add_susfs_in_gki-${ANDROID_VER}-${KERNEL_VER}.patch"
 
     - name: Apply enhanced SUSFS patch (51)
-      if: ${{ !inputs.clean_baseline }}
+      if: ${{ !inputs.clean_baseline && inputs.add_susfs && inputs.add_ksu }}
       working-directory: ${{ env.KERNEL_ROOT }}/common
       run: patch -p1 -F3 --no-backup-if-mismatch < "$GITHUB_WORKSPACE/$VERSION_DIR/SukiSU-Ultra/patches/51_enhanced_susfs-${ANDROID_VER}-${KERNEL_VER}.patch"
 
     - name: Apply KSU safety patch (70)
-      if: ${{ !inputs.clean_baseline }}
+      if: ${{ !inputs.clean_baseline && inputs.add_ksu }}
       working-directory: ${{ env.KERNEL_ROOT }}/${{ env.KSU_DIR }}
       run: |
         PATCH="$GITHUB_WORKSPACE/$VERSION_DIR/SukiSU-Ultra/patches/70_ksu_safety-sukisu-${KERNEL_VER}.patch"
@@ -206,7 +217,7 @@ jobs:
       run: patch -p1 -F3 --no-backup-if-mismatch < "$GITHUB_WORKSPACE/$VERSION_DIR/SukiSU-Ultra/patches/60_zeromount-${ANDROID_VER}-${KERNEL_VER}.patch"
 
     - name: Fix SUSFS compatibility
-      if: ${{ !inputs.clean_baseline }}
+      if: ${{ !inputs.clean_baseline && inputs.add_susfs && inputs.add_ksu }}
       working-directory: ${{ env.KERNEL_ROOT }}/common
       run: |
         FIX="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/fix-susfs-compat.sh"
