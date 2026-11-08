@@ -297,6 +297,13 @@ jobs:
         cp "$KERNEL_ROOT/bazel-bin/common/kernel_aarch64/Image" out/Image
         (cd "$ANYKERNEL3" && zip -r9 -q "$GITHUB_WORKSPACE/out/${ARTIFACT_BASE}-AnyKernel3.zip" .)
         cp "$WILD_REPORT" out/wild-report.txt 2>/dev/null || true
+        # ABI evidence: export CRCs of every kernel symbol (used to check vendor-module compatibility)
+        for f in Module.symvers System.map; do
+          src=$(find "$KERNEL_ROOT/bazel-bin/common" "$KERNEL_ROOT/out" -maxdepth 4 -name "$f" -type f 2>/dev/null | head -1)
+          [ -n "$src" ] && cp "$src" "out/$f" && echo "collected $f from $src" || echo "::warning::$f not found"
+        done
+        src=$(find "$KERNEL_ROOT/bazel-bin/common" "$KERNEL_ROOT/out" -maxdepth 4 -name ".config" -type f 2>/dev/null | head -1)
+        [ -n "$src" ] && cp "$src" out/final.config || echo "::warning::.config not found"
         cp "$DEFCONFIG_FRAGMENT" out/final-config.fragment 2>/dev/null || true
         (cd out && sha256sum * > SHA256SUMS.txt)
         ls -l out
