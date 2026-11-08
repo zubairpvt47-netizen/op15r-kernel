@@ -70,9 +70,11 @@ perf_group() {
   # NEON (q0-q5/v0-v5) and no kernel_neon_begin(), which clobbers userspace FP/SIMD state.
   # (Audited: optimized_mem_operations only touches generic lib/string.c code that arm64 compiles
   # out; mem_opt_prefetch adds prfm hints; clear_page_16bytes_align adds .p2align. All scalar.)
+  # NOTE: add_timeout_wakelocks_globally is intentionally NOT applied: it forces every userspace
+  # wakelock to time out after 500 ms, breaking background audio/downloads/alarms with screen off.
   for p in optimized_mem_operations reduce_cache_pressure \
            mem_opt_prefetch minimise_wakeup_time int_sqrt \
-           reduce_gc_thread_sleep_time add_timeout_wakelocks_globally \
+           reduce_gc_thread_sleep_time \
            f2fs_reduce_congestion reduce_freeze_timeout clear_page_16bytes_align \
            add_limitation_scaling_min_freq re_write_limitation_scaling_min_freq \
            adjust_cpu_scan_order avoid_extra_s2idle_wake_attempts disable_cache_hot_buddy \
