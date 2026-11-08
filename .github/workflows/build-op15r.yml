@@ -59,6 +59,17 @@ on:
         description: "SUSFS kernel patches (needs add_ksu; off = isolation build)"
         type: boolean
         default: true
+      ksu_lsm_fix:
+        description: "Skip SukiSU's LSM registration (this kernel has no free LSM slot: 6th LSM panics at boot) and drop manual-su"
+        type: boolean
+        default: true
+      ksu_hook_mode:
+        description: "SukiSU hook mode: manual (current) or none (SUSFS supplies the hooks)"
+        type: choice
+        options:
+          - manual
+          - none
+        default: manual
       susfs_profile:
         description: "SUSFS option set: full (all options) or core (drops unicode filter, hardening, symbol hiding, cmdline spoof, open/kstat redirect)"
         type: choice
@@ -162,6 +173,8 @@ jobs:
           [ "${{ inputs.add_ksu }}" = "true" ] || SUF="$SUF-noksu"
           [ "${{ inputs.add_susfs }}" = "true" ] || SUF="$SUF-nosusfs"
           [ "${{ inputs.susfs_profile }}" = "core" ] && SUF="$SUF-susfscore"
+          [ "${{ inputs.ksu_lsm_fix }}" = "true" ] && SUF="$SUF-lsmfix"
+          [ "${{ inputs.ksu_hook_mode }}" = "none" ] && SUF="$SUF-nonehook"
           echo "ARTIFACT_BASE=OP15R-${KERNEL_VER}.${SL}-SukiSU-SUSFS-ZeroMount-Wild${SUF}" >> "$GITHUB_ENV"
         fi
         if [ -n "$EXPECT_COMMIT" ]; then
@@ -195,6 +208,28 @@ jobs:
           if grep -q "vzalloc" "$SUPERCALLS" && ! head -5 "$SUPERCALLS" | grep -q "vmalloc.h"; then
             sed -i '1a #include <linux/vmalloc.h>' "$SUPERCALLS"
           fi
+        fi
+
+    - name: Skip SukiSU LSM registration (no free LSM slot)
+      if: ${{ !inputs.clean_baseline && inputs.add_ksu && inputs.ksu_lsm_fix }}
+      working-directory: ${{ env.KERNEL_ROOT }}/${{ env.KSU_DIR }}
+      run: |
+        python3 - <<'PYEOF'
+        import re, sys
+        p = 'kernel/lsm_hook.c'
+        s = open(p, encoding='utf-8').read()
+        old = 'security_add_hooks(ksu_hooks, ARRAY_SIZE(ksu_hooks), &ksu_lsmid);'
+        if old not in s:
+            sys.exit('lsm_hook.c: expected security_add_hooks call not found')
+        new = ('(void)ksu_hooks; (void)&ksu_lsmid; '
+               'pr_info("KernelSU: LSM registration skipped (kernel has no free LSM slot)\\n");')
+        s = s.replace(old, new, 1)
+        open(p, 'w', encoding='utf-8').write(s)
+        print('patched lsm_hook.c')
+        PYEOF
+        grep -n "LSM registration skipped" kernel/lsm_hook.c
+        if grep -n "security_add_hooks(ksu_hooks, ARRAY_SIZE(ksu_hooks), &ksu_lsmid)" kernel/lsm_hook.c; then
+          echo "::error::LSM registration still present"; exit 1
         fi
 
     - name: Fix old-kernel compatibility helpers
@@ -266,6 +301,17 @@ jobs:
 
         # features whose patches applied cleanly
         if [ -s "$WILD_FRAGMENT" ]; then cat "$WILD_FRAGMENT" >> "$DEFCONFIG_FRAGMENT"; fi
+
+        if [ "${{ inputs.ksu_lsm_fix }}" = "true" ]; then
+          sed -i '/^CONFIG_KSU_MANUAL_SU=/d;/^# CONFIG_KSU_MANUAL_SU is not set/d' "$DEFCONFIG_FRAGMENT"
+          echo "# CONFIG_KSU_MANUAL_SU is not set" >> "$DEFCONFIG_FRAGMENT"
+        fi
+        if [ "${{ inputs.ksu_hook_mode }}" = "none" ]; then
+          sed -i '/^CONFIG_KSU_MANUAL_HOOK=/d;/^# CONFIG_KSU_MANUAL_HOOK is not set/d;/^CONFIG_KSU_NONE_HOOK=/d' "$DEFCONFIG_FRAGMENT"
+          echo "# CONFIG_KSU_MANUAL_HOOK is not set" >> "$DEFCONFIG_FRAGMENT"
+          echo "# CONFIG_KSU_SYSCALL_HOOK is not set" >> "$DEFCONFIG_FRAGMENT"
+          echo "CONFIG_KSU_NONE_HOOK=y" >> "$DEFCONFIG_FRAGMENT"
+        fi
 
         if [ "${{ inputs.susfs_profile }}" = "core" ]; then
           for c in KSU_SUSFS_UNICODE_FILTER KSU_SUSFS_HARDENED KSU_SUSFS_HIDDEN_NAME \
