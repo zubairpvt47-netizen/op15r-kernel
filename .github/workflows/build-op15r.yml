@@ -59,6 +59,13 @@ on:
         description: "SUSFS kernel patches (needs add_ksu; off = isolation build)"
         type: boolean
         default: true
+      susfs_profile:
+        description: "SUSFS option set: full (all options) or core (drops unicode filter, hardening, symbol hiding, cmdline spoof, open/kstat redirect)"
+        type: choice
+        options:
+          - full
+          - core
+        default: full
       clean_baseline:
         description: "CONTROL BUILD: no SukiSU/SUSFS/ZeroMount/Wild/BBG at all (stock source rebuilt)"
         type: boolean
@@ -154,6 +161,7 @@ jobs:
           SUF=""
           [ "${{ inputs.add_ksu }}" = "true" ] || SUF="$SUF-noksu"
           [ "${{ inputs.add_susfs }}" = "true" ] || SUF="$SUF-nosusfs"
+          [ "${{ inputs.susfs_profile }}" = "core" ] && SUF="$SUF-susfscore"
           echo "ARTIFACT_BASE=OP15R-${KERNEL_VER}.${SL}-SukiSU-SUSFS-ZeroMount-Wild${SUF}" >> "$GITHUB_ENV"
         fi
         if [ -n "$EXPECT_COMMIT" ]; then
@@ -169,7 +177,9 @@ jobs:
       env:
         SUKISU_COMMIT: ${{ inputs.sukisu_commit }}
       run: |
-        curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
+        curl -fLsS --retry 6 --retry-all-errors --retry-delay 8 -o /tmp/sukisu-setup.sh \
+          "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh"
+        bash /tmp/sukisu-setup.sh builtin
         [ -d "$KERNEL_ROOT/$KSU_DIR" ] || { echo "FATAL: $KSU_DIR not created by setup.sh"; exit 1; }
         PIN="${SUKISU_COMMIT:-$(cat "$GITHUB_WORKSPACE/$VERSION_DIR/sukisu-pin.txt" 2>/dev/null || true)}"
         if [ -n "$PIN" ]; then
@@ -256,6 +266,16 @@ jobs:
 
         # features whose patches applied cleanly
         if [ -s "$WILD_FRAGMENT" ]; then cat "$WILD_FRAGMENT" >> "$DEFCONFIG_FRAGMENT"; fi
+
+        if [ "${{ inputs.susfs_profile }}" = "core" ]; then
+          for c in KSU_SUSFS_UNICODE_FILTER KSU_SUSFS_HARDENED KSU_SUSFS_HIDDEN_NAME \
+                   KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
+                   KSU_SUSFS_OPEN_REDIRECT KSU_SUSFS_SUS_KSTAT_REDIRECT; do
+            sed -i "/^CONFIG_${c}=/d;/^# CONFIG_${c} is not set/d" "$DEFCONFIG_FRAGMENT"
+            echo "# CONFIG_${c} is not set" >> "$DEFCONFIG_FRAGMENT"
+          done
+          echo "SUSFS profile: core"
+        fi
         # ZeroMount config (only if its patch was applied)
         if [ "${{ inputs.add_zeromount }}" = "true" ]; then
           grep -rh '^config ZEROMOUNT' --include='Kconfig*' common/ 2>/dev/null | head -3 || true
