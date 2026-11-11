@@ -1,0 +1,7 @@
+# GKID: BBR as default congestion control, fq_codel default qdisc (opt-in: net_defaults)
+CONFIG_TCP_CONG_ADVANCED=y
+CONFIG_TCP_CONG_BBR=y
+CONFIG_DEFAULT_BBR=y
+CONFIG_NET_SCH_FQ=y
+CONFIG_NET_SCH_DEFAULT=y
+CONFIG_DEFAULT_FQ_CODEL=y

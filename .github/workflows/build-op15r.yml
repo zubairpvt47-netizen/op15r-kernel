@@ -1,12 +1,14 @@
 name: OnePlus 15R kernel
 
 # Rebuilds the exact GKI kernel the phone ships for a given firmware (Google kernel/common
-# release tag) and adds SukiSU Ultra (built-in) + enhanced SUSFS + ZeroMount VFS + WildKernels
-# features. To target a new firmware, read `uname -r` on the phone (the g<sha> part), find the
-# matching android16-6.12-<YYYY-MM>_r<N> tag and pass it as common_ref / release_branch.
+# release tag) and adds SukiSU Ultra (built-in) + enhanced SUSFS + the GKID-Kernels feature set
+# (Baseband Guard, NoMount, NTSync, DroidSpaces, NetHunter, BBRv3, networking configs).
+# GKID's performance/battery tuning patches are intentionally NOT applied. To target a new
+# firmware, read `uname -r` on the phone (the g<sha> part), find the matching
+# android16-6.12-<YYYY-MM>_r<N> tag and pass it as common_ref / release_branch.
 #
-# Build pipeline adapted from Enginex0/Super-Builders (GPL-3.0); feature patches from
-# WildKernels/kernel_patches.
+# Build pipeline adapted from Enginex0/Super-Builders (GPL-3.0); features from
+# ahmed-alnassif/GKID-Kernels (GPL-3.0), maxsteeel/nomount, Baseband-guard.
 
 on:
   workflow_dispatch:
@@ -23,30 +25,42 @@ on:
         description: "Abort unless kernel/common HEAD starts with this sha (the g<sha> from uname -r; empty = skip)"
         type: string
         default: "242e1a07f878"
-      add_zeromount:
-        description: "ZeroMount VFS driver (patch 60 is ported to the SukiSU SUSFS pin; ksu_variant=sukisu only)"
-        type: boolean
-        default: true
       add_bbg:
         description: "Baseband Guard"
         type: boolean
         default: true
-      wild_perf:
-        description: "WildKernels tuning patches"
+      add_nomount:
+        description: "NoMount VFS path-redirection driver (self-contained fs/nomount; needs the NoMount metamodule in userspace)"
         type: boolean
         default: true
-      wild_ntsync:
-        description: "NTSync"
+      nomount_ref:
+        description: "NoMount git ref (tag or 40-char sha); default = v2.2.0"
+        type: string
+        default: "bf1847f98fed382369c43bfd652cd93774b9b8e3"
+      gkid_ntsync:
+        description: "NTSync (Winlator/GameHub); the driver is already in the r54 tree, this enables it"
         type: boolean
         default: true
-      wild_droidspaces:
-        description: "Droidspaces (SYSVIPC/USER_NS with kABI padding)"
+      gkid_droidspaces:
+        description: "DroidSpaces (SYSVIPC/IPC_NS/PID_NS/POSIX_MQUEUE with GKID's kABI padding patch)"
         type: boolean
         default: true
-      wild_unicode:
-        description: "Unicode bypass fix (experimental)"
+      gkid_nethunter:
+        description: "NetHunter (mac80211 monitor/injection patch + rtw88 USB drivers; experimental, build separately)"
+        type: boolean
+        default: false
+      gkid_bbrv3:
+        description: "BBRv3 (GKID patch; r54 already carries part of the BBRv3 series, so it may be skipped and reported)"
+        type: boolean
+        default: false
+      gkid_net:
+        description: "GKID networking/filesystem configs (ip_set, IPv6 NAT, netfilter/tc extras, TTL, exFAT/VFAT ...)"
         type: boolean
         default: true
+      gkid_net_defaults:
+        description: "Make BBR the default congestion control and fq_codel the default qdisc (a tuning choice; off by default)"
+        type: boolean
+        default: false
       ksu_variant:
         description: "Root implementation: sukisu (SukiSU Ultra 'builtin', manager v4.3.x) or next (KernelSU-Next dev-susfs)"
         type: choice
@@ -85,7 +99,7 @@ on:
           - core
         default: full
       clean_baseline:
-        description: "CONTROL BUILD: no SukiSU/SUSFS/ZeroMount/Wild/BBG at all (stock source rebuilt)"
+        description: "CONTROL BUILD: no SukiSU/SUSFS/NoMount/GKID extras/BBG at all (stock source rebuilt)"
         type: boolean
         default: false
       infra_tweaks:
@@ -98,7 +112,7 @@ permissions:
 
 jobs:
   build:
-    name: "${{ inputs.ksu_variant }} + SUSFS + Wild"
+    name: "${{ inputs.ksu_variant }} + SUSFS + GKID features"
     runs-on: ubuntu-latest
     timeout-minutes: 240
     env:
@@ -124,11 +138,10 @@ jobs:
     - name: Install host tools
       run: sudo apt-get install -y -qq lld binutils jq pigz zip dos2unix
 
-    - name: Fetch helpers (AnyKernel3, WildKernels patches, repo tool)
+    - name: Fetch helpers (AnyKernel3 flasher, repo tool)
       run: |
         git clone --depth=1 -b gki-2.0 https://github.com/WildKernels/AnyKernel3.git "$GITHUB_WORKSPACE/AnyKernel3"
         rm -rf "$GITHUB_WORKSPACE/AnyKernel3/.git"
-        git clone --depth=1 https://github.com/WildKernels/kernel_patches.git "$GITHUB_WORKSPACE/kernel_patches"
         mkdir -p "$GITHUB_WORKSPACE/git-repo"
         curl -fsSL https://storage.googleapis.com/git-repo-downloads/repo -o "$GITHUB_WORKSPACE/git-repo/repo"
         chmod +x "$GITHUB_WORKSPACE/git-repo/repo"
@@ -142,10 +155,10 @@ jobs:
           echo "KERNEL_ROOT=$KERNEL_ROOT"
           echo "DEFCONFIG=$KERNEL_ROOT/common/arch/arm64/configs/gki_defconfig"
           echo "DEFCONFIG_FRAGMENT=$KERNEL_ROOT/common/arch/arm64/configs/sukisu_gki.fragment"
-          echo "KERNEL_PATCHES=$GITHUB_WORKSPACE/kernel_patches"
+          echo "KERNEL_PATCHES=$GITHUB_WORKSPACE/$VERSION_DIR/gkid/patches"
           echo "ANYKERNEL3=$GITHUB_WORKSPACE/AnyKernel3"
-          echo "WILD_REPORT=$GITHUB_WORKSPACE/wild-report.txt"
-          echo "WILD_FRAGMENT=$GITHUB_WORKSPACE/wild-conditional.fragment"
+          echo "GKID_REPORT=$GITHUB_WORKSPACE/gkid-report.txt"
+          echo "GKID_FRAGMENT=$GITHUB_WORKSPACE/gkid-conditional.fragment"
         } >> "$GITHUB_ENV"
 
     - name: Sync kernel source (pinned to the phone's exact commit)
@@ -181,9 +194,12 @@ jobs:
           SUF=""
           [ "${{ inputs.add_susfs }}" = "true" ] && SUF="$SUF-SUSFS"
           [ "${{ inputs.susfs_profile }}" = "core" ] && SUF="${SUF}core"
-          [ "${{ inputs.add_zeromount }}" = "true" ] && SUF="$SUF-ZeroMount"
+          [ "${{ inputs.add_nomount }}" = "true" ] && SUF="$SUF-NoMount"
           [ "${{ inputs.add_bbg }}" = "true" ] && SUF="$SUF-BBG"
-          [ "${{ inputs.wild_perf }}${{ inputs.wild_ntsync }}${{ inputs.wild_droidspaces }}" != "falsefalsefalse" ] && SUF="$SUF-Wild"
+          [ "${{ inputs.gkid_ntsync }}" = "true" ] && SUF="$SUF-NTSync"
+          [ "${{ inputs.gkid_droidspaces }}" = "true" ] && SUF="$SUF-Droid"
+          [ "${{ inputs.gkid_nethunter }}" = "true" ] && SUF="$SUF-NetHunter"
+          [ "${{ inputs.gkid_bbrv3 }}" = "true" ] && SUF="$SUF-BBRv3"
           [ "${{ inputs.lsm_mode }}" = "skip" ] && SUF="$SUF-lsmskip"
           echo "ARTIFACT_BASE=OP15R-${KERNEL_VER}.${SL}-${ROOT}${SUF}" >> "$GITHUB_ENV"
         fi
@@ -378,13 +394,35 @@ jobs:
         # leave .rej, which the reject check below still catches
         echo "offset backups: $(find . -name '*.orig' | wc -l)"; find . -name '*.orig' -delete
 
-    - name: Apply ZeroMount VFS patch (60)
-      # ZeroMount hunks sit inside SUSFS context, so it cannot apply without SUSFS. The patch is
-      # generated against the SukiSU SUSFS pin (68f62fae) and applied with NO fuzz: with fuzz the
-      # old patch silently landed hooks inside comments (dead code) and after-the-fact (task_mmu).
-      if: ${{ inputs.add_zeromount && inputs.add_susfs && inputs.add_ksu && !inputs.clean_baseline }}
+    - name: Add NoMount (fs/nomount, built-in)
+      # NoMount is a self-contained driver (own inode/dir ops, no hooks in core VFS files), so it
+      # needs neither SUSFS context nor patch hunks. The source is copied (not symlinked) into the
+      # tree and pinned to a commit.
+      if: ${{ inputs.add_nomount && !inputs.clean_baseline }}
       working-directory: ${{ env.KERNEL_ROOT }}/common
-      run: patch -p1 -F0 --no-backup-if-mismatch < "$GITHUB_WORKSPACE/$VERSION_DIR/SukiSU-Ultra/patches/60_zeromount-${ANDROID_VER}-${KERNEL_VER}.patch"
+      env:
+        NOMOUNT_REF: ${{ inputs.nomount_ref }}
+      run: |
+        set -euo pipefail
+        for i in 1 2 3 4 5; do git clone --no-checkout https://github.com/maxsteeel/nomount.git "$GITHUB_WORKSPACE/nomount" && break; rm -rf "$GITHUB_WORKSPACE/nomount"; sleep 8; done
+        git -C "$GITHUB_WORKSPACE/nomount" fetch --tags origin
+        git -C "$GITHUB_WORKSPACE/nomount" checkout --detach "$NOMOUNT_REF"
+        echo "NoMount $(git -C "$GITHUB_WORKSPACE/nomount" log -1 --format='%h %cs %s')"
+        [ ! -e fs/nomount ] || { echo "::error::fs/nomount already exists"; exit 1; }
+        mkdir fs/nomount
+        cp "$GITHUB_WORKSPACE"/nomount/kernel/src/* fs/nomount/
+        grep -q 'nomount' fs/Makefile || printf '\nobj-$(CONFIG_NOMOUNT) += nomount/\n' >> fs/Makefile
+        grep -q 'fs/nomount/Kconfig' fs/Kconfig || python3 - fs/Kconfig <<'PYEOF'
+        import sys
+        p = sys.argv[1]
+        s = open(p, encoding='utf-8').read()
+        i = s.rfind('\nendmenu')
+        if i < 0:
+            sys.exit('fs/Kconfig: endmenu anchor not found')
+        open(p, 'w', encoding='utf-8').write(s[:i] + '\nsource "fs/nomount/Kconfig"\n' + s[i:])
+        print('fs/Kconfig: sourced fs/nomount/Kconfig')
+        PYEOF
+        ls -l fs/nomount
 
     - name: Fix SUSFS compatibility
       if: ${{ !inputs.clean_baseline && inputs.add_susfs && inputs.add_ksu }}
@@ -393,15 +431,17 @@ jobs:
         FIX="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/fix-susfs-compat.sh"
         [ -f "$FIX" ] && bash "$FIX" . "$SUBLEVEL" "$ANDROID_VER" "$KERNEL_VER" "$KERNEL_PATCHES" || true
 
-    - name: Apply WildKernels feature patches
+    - name: Apply GKID feature groups
       if: ${{ !inputs.clean_baseline }}
       working-directory: ${{ env.KERNEL_ROOT }}/common
       env:
-        WILD_PERF: ${{ inputs.wild_perf }}
-        WILD_NTSYNC: ${{ inputs.wild_ntsync }}
-        WILD_DROIDSPACES: ${{ inputs.wild_droidspaces }}
-        WILD_UNICODE: ${{ inputs.wild_unicode }}
-      run: bash "$GITHUB_WORKSPACE/scripts/wild-extras.sh" . "$KERNEL_PATCHES" "$WILD_FRAGMENT" "$WILD_REPORT"
+        GKID_NTSYNC: ${{ inputs.gkid_ntsync }}
+        GKID_DROIDSPACES: ${{ inputs.gkid_droidspaces }}
+        GKID_NETHUNTER: ${{ inputs.gkid_nethunter }}
+        GKID_BBRV3: ${{ inputs.gkid_bbrv3 }}
+        GKID_NET: ${{ inputs.gkid_net }}
+        GKID_NET_DEFAULTS: ${{ inputs.gkid_net_defaults }}
+      run: bash "$GITHUB_WORKSPACE/scripts/gkid-extras.sh" . "$GITHUB_WORKSPACE/$VERSION_DIR/gkid" "$GKID_FRAGMENT" "$GKID_REPORT"
 
     - name: Fail on patch rejects
       run: |
@@ -421,10 +461,10 @@ jobs:
         FRAGMENT="$GITHUB_WORKSPACE/$VERSION_DIR/defconfig.fragment"
         HELPERS="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers"
         # no build/build.sh on 6.12 -> Kleaf; ZRAM stays a module like stock, so no --zram
-        bash "$HELPERS/assemble-defconfig.sh" "$FRAGMENT" "$DEFCONFIG_FRAGMENT" "$DEFCONFIG" --susfs --overlayfs --wild --kleaf
+        bash "$HELPERS/assemble-defconfig.sh" "$FRAGMENT" "$DEFCONFIG_FRAGMENT" "$DEFCONFIG" --susfs --overlayfs --kleaf
 
-        # features whose patches applied cleanly
-        if [ -s "$WILD_FRAGMENT" ]; then cat "$WILD_FRAGMENT" >> "$DEFCONFIG_FRAGMENT"; fi
+        # GKID groups that applied cleanly (+ config-only groups)
+        if [ -s "$GKID_FRAGMENT" ]; then cat "$GKID_FRAGMENT" >> "$DEFCONFIG_FRAGMENT"; fi
 
         if [ "${{ inputs.susfs_profile }}" = "core" ]; then
           for c in KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
@@ -434,10 +474,10 @@ jobs:
           done
           echo "SUSFS profile: core"
         fi
-        # ZeroMount config (only if its patch was applied)
-        if [ "${{ inputs.add_zeromount }}" = "true" ] && grep -q '^config ZEROMOUNT' common/fs/Kconfig; then
-          sed -i '/^CONFIG_ZEROMOUNT=/d;/^# CONFIG_ZEROMOUNT is not set/d' "$DEFCONFIG_FRAGMENT"
-          echo "CONFIG_ZEROMOUNT=y" >> "$DEFCONFIG_FRAGMENT"
+        # NoMount config (built-in; only if the driver was added)
+        if [ "${{ inputs.add_nomount }}" = "true" ] && [ -f common/fs/nomount/Kconfig ]; then
+          sed -i '/^CONFIG_NOMOUNT=/d;/^# CONFIG_NOMOUNT is not set/d' "$DEFCONFIG_FRAGMENT"
+          echo "CONFIG_NOMOUNT=y" >> "$DEFCONFIG_FRAGMENT"
         fi
 
         # drop CONFIG_KSU_* symbols that don't exist in this tree
@@ -452,6 +492,9 @@ jobs:
 
         # always keep module vermagic flags identical to stock: SMP preempt mod_unload modversions
         sed -i '/^CONFIG_MODVERSIONS=/d;/^CONFIG_MODULE_UNLOAD=/d;/^CONFIG_PREEMPT=/d' "$DEFCONFIG_FRAGMENT"
+
+        # last-wins per CONFIG_ key (GKID fragments are appended after the base fragment)
+        tac "$DEFCONFIG_FRAGMENT" | awk -F= '/^CONFIG_/{if(seen[$1]++)next} {print}' | tac > "$DEFCONFIG_FRAGMENT.tmp" && mv "$DEFCONFIG_FRAGMENT.tmp" "$DEFCONFIG_FRAGMENT"
 
         bash "$HELPERS/bypass-abi-check.sh" . "$ANDROID_VER" "$KERNEL_VER"
 
@@ -505,7 +548,7 @@ jobs:
         echo "--- version string:"
         strings -n 20 "$IMG" | grep -m1 'Linux version' || true
         echo "--- key features present in the binary:"
-        for s in susfs zeromount kernelsu baseband_guard ntsync; do
+        for s in susfs nomount kernelsu baseband_guard ntsync; do
           printf '%-16s %s\n' "$s" "$(strings "$IMG" | grep -ci "$s")"
         done
         echo "--- vermagic flags in binary:"
@@ -518,7 +561,7 @@ jobs:
         mkdir -p out
         cp "$KERNEL_ROOT/bazel-bin/common/kernel_aarch64/Image" out/Image
         (cd "$ANYKERNEL3" && zip -r9 -q "$GITHUB_WORKSPACE/out/${ARTIFACT_BASE}-AnyKernel3.zip" .)
-        cp "$WILD_REPORT" out/wild-report.txt 2>/dev/null || true
+        cp "$GKID_REPORT" out/gkid-report.txt 2>/dev/null || true
         # ABI evidence: export CRCs of every kernel symbol (used to check vendor-module compatibility)
         for f in Module.symvers System.map; do
           src=$(find "$KERNEL_ROOT/bazel-bin/common" "$KERNEL_ROOT/out" -maxdepth 4 -name "$f" -type f 2>/dev/null | head -1)
@@ -537,7 +580,7 @@ jobs:
         find "$KERNEL_ROOT" -type f -name '*.rej' -print0 2>/dev/null | while IFS= read -r -d '' f; do
           rel="${f#"$KERNEL_ROOT"/}"; mkdir -p "patch-rejects/$(dirname "$rel")"; cp "$f" "patch-rejects/$rel"
         done
-        [ -f "$WILD_REPORT" ] && cp "$WILD_REPORT" patch-rejects/ || true
+        [ -f "$GKID_REPORT" ] && cp "$GKID_REPORT" patch-rejects/ || true
         [ -f "$GITHUB_WORKSPACE/bazel-build.log" ] && tail -n 400 "$GITHUB_WORKSPACE/bazel-build.log" > patch-rejects/bazel-tail.log || true
 
     - name: Upload kernel
@@ -563,6 +606,6 @@ jobs:
           echo "## OP15R kernel 6.12.${SUBLEVEL:-?}"
           echo ""
           echo '```'
-          cat "$WILD_REPORT" 2>/dev/null || echo "(no wild report)"
+          cat "$GKID_REPORT" 2>/dev/null || echo "(no gkid report)"
           echo '```'
         } >> "$GITHUB_STEP_SUMMARY"
