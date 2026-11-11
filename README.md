@@ -3,7 +3,7 @@
 # OnePlus 15R Kernel
 
 **A custom GKI kernel for the OnePlus 15R (CPH2767)**
-SukiSU Ultra · Enhanced SUSFS · ZeroMount VFS · the WildKernels feature set
+**Core** — SukiSU Ultra · SUSFS · NoMount · Baseband Guard · GKID networking features
 
 ![Device](https://img.shields.io/badge/device-OnePlus%2015R%20(CPH2767)-eb0028?style=flat-square)
 ![Kernel](https://img.shields.io/badge/kernel-GKI%20android16--6.12-3ddc84?style=flat-square)
@@ -29,9 +29,11 @@ It tracks only the 15R, so every build here is matched to a specific firmware of
 
 ## Supported builds
 
-| Firmware | Kernel | Upstream source | Status |
-|---|---|---|---|
-| `CPH2767_17.0.0.106(EX01)` | 6.12.69 | `android16-6.12-2026-03_r54` (`242e1a07f878`) | Pipeline verified, awaiting first build and device test |
+| Release | Firmware | Kernel | Upstream source | Status |
+|---|---|---|---|---|
+| **Core v1.0.0** | `CPH2767_17.0.0.106(EX01)` | 6.12.69 | `android16-6.12-2026-03_r54` (`242e1a07f878`) | See the [release page](../../releases) |
+
+`uname -r` reports `6.12.69-android16-6-4k-OP15R-Core-v1.0.0`.
 
 New firmware gets a new row. Builds for older firmware stay listed so you can match them to the ROM you run.
 
@@ -42,48 +44,34 @@ New firmware gets a new row. Builds for older firmware stay listed so you can ma
 |---|---|
 | **SukiSU Ultra** or **KernelSU-Next** | Built into the kernel at a pinned commit (`ksu_variant`): SukiSU Ultra `builtin` branch (works with the v4.3.x manager) or KernelSU-Next `dev-susfs`. No LKM or `init_boot` patch needed. |
 | **SUSFS** | Upstream susfs4ksu (v2.3 with SukiSU, v2.4 with KernelSU-Next): path, mount, kstat and map hiding, uname and cmdline/bootconfig spoofing, open redirect, symbol hiding. |
-| **ZeroMount VFS** | Systemless path redirection at the VFS layer: `getname()` redirection, directory-entry injection, `d_path`/xattr/`statfs` spoofing, bloom-filter lookup, ioctl control interface. |
+| **NoMount** | Built-in systemless path redirection at the VFS layer (`fs/nomount`, v2.2.0), driven by the NoMount module. |
 | **Baseband Guard** | Security module that blocks writes to critical baseband/modem block devices. |
 
 ### Networking
 | | |
 |---|---|
-| **BBR** | Selectable TCP congestion control, alongside CUBIC. |
-| **Queue disciplines** | `fq`, `fq_codel`, CAKE, PIE, `fq_pie`. |
+| **BBR** | Selectable TCP congestion control, alongside CUBIC (default stays CUBIC). |
+| **Queue disciplines** | `fq`, `fq_codel`, `codel`, `htb`, `tbf`, `sfq`, `prio`, `multiq`, `netem`, `ingress`. |
 | **ip_set** | Bitmap, hash and list set types (up to 65534 sets), plus `xt_set` and `addrtype` matches. |
 | **IPv6 NAT** | `ip6table_nat` and IPv6 masquerade. |
-| **TTL / HL** | `TTL` target and `HL` match/target, commonly used for tethering TTL adjustment. |
+| **netfilter extras** | `TTL`/`HL`, `DSCP`, `CONNMARK`, `CLASSIFY`, `IDLETIMER`, `NFLOG`, `HMARK` targets; `string`, `u32`, `time`, `quota`, `statistic`, `socket`, `mac`, `limit`, `length`, `policy` matches. |
 
-### Containers and compatibility
+### Filesystems
 | | |
 |---|---|
-| **Droidspaces** | `SYSVIPC`, `PID_NS`, `USER_NS`, `POSIX_MQUEUE`, `DEVTMPFS`, `MACVLAN`, netfilter `REJECT`/`LOG`/`recent`, with kABI padding patches so struct layouts stay compatible with stock vendor modules. |
-| **NTSync** | Windows NT synchronization primitives for Wine/Proton. |
-| **Overlay support** | `TMPFS_XATTR` and `TMPFS_POSIX_ACL`. |
-| **Unicode bypass fix** | WildKernels' fix (marked experimental upstream). |
+| **Overlay support** | `TMPFS_XATTR` and `TMPFS_POSIX_ACL`, so overlay-based module mounting works on `/data` and tmpfs. |
 
-### Performance and tuning
-23 WildKernels patches for memory, scheduling and power, CPU frequency, storage, networking and log noise.
-
-<details>
-<summary>Show the patch list</summary>
-
-| Area | Patches |
-|---|---|
-| Memory | `optimized_mem_operations`, `optimise_memcmp`, `clear_page_16bytes_align`, `mem_opt_prefetch`, `reduce_cache_pressure`, `int_sqrt` |
-| Scheduler / power | `minimise_wakeup_time`, `adjust_cpu_scan_order`, `disable_cache_hot_buddy`, `avoid_extra_s2idle_wake_attempts`, `reduce_pci_pme_wakeups`, `reduce_freeze_timeout`, `add_timeout_wakelocks_globally` |
-| CPU frequency | `add_limitation_scaling_min_freq`, `re_write_limitation_scaling_min_freq`, `use_unlikely_wrap_cpufreq` |
-| Storage | `f2fs_reduce_congestion`, `f2fs_enlarge_min_fsync_blocks`, `reduce_gc_thread_sleep_time`, `increase_ext4_default_commit_age` |
-| Network | `increase_sk_mem_packets` |
-| Logging | `silence_irq_cpu_logspam`, `silence_system_logspam` |
-
-</details>
+### Optional feature groups
+Off in the stable Core build, available as workflow inputs and built separately: **NTSync**, **Droidspaces**
+(with kABI padding so struct layouts stay compatible with stock vendor modules), **NetHunter** and **BBRv3**.
+Each group applies atomically and is reverted if any of its patches fails.
 
 ### Not included
-- **HMBird/SCX scheduler** and **BBRv3**: the WildKernels 15R config leaves both off too.
-- **OnePlus vendor-module blacklisting and `fake_config`**: these belong to OnePlus' own kernel tree, not GKI.
-- **ZRAM LZ4K/LZ4KD**: ZRAM is a module on the stock kernel and stays one.
-- **`file_struct_8bytes_align`**: it changes the ABI checksum of `struct file`, which would affect vendor modules.
+- **Performance and battery tuning patches** (memory-op rewrites, wakelock and scheduler changes): the stock kernel's behaviour is kept.
+- **ZeroMount**: replaced by NoMount.
+- **HMBird/SCX scheduler**, **ZRAM LZ4K/LZ4KD**, **OnePlus vendor-module blacklisting**: not part of GKI.
+- **`CONFIG_IPV6_SUBTREES` and `MAC80211_MESH`**: they change struct layouts that vendor modules use.
+- **SUSFS debug logging** (`KSU_SUSFS_ENABLE_LOG`): off in release builds.
 
 ## How it works
 
@@ -92,14 +80,14 @@ Each build runs these steps in order:
 1. **Sync** Google's `kernel/common` at the exact release tag of the phone's kernel, and verify the commit.
 2. **SukiSU Ultra** or **KernelSU-Next** is added as a built-in at a pinned commit, and the kernel gets extra LSM slots so it (and Baseband Guard) can register without displacing a stock LSM.
 3. The pinned upstream **SUSFS** patch is applied with WildKernels' compatibility helpers.
-4. **ZeroMount** is applied on top.
-5. **WildKernels** feature groups are applied one by one, each rolled back if any of its patches fails.
+4. **NoMount** is added as a built-in (`fs/nomount`).
+5. Optional **GKID** feature groups (NTSync, Droidspaces, NetHunter, BBRv3) are applied one by one, each rolled back if any of its patches fails.
 6. **Baseband Guard** and the Kconfig fragment are added.
 7. **Build** with Kleaf/Bazel, then package an AnyKernel3 zip and the raw `Image`.
 
-**Atomic feature groups.** NTSync, Droidspaces and the Unicode fix are each all-or-nothing. If one patch in a group fails,
+**Atomic feature groups.** NTSync, Droidspaces, NetHunter and BBRv3 are each all-or-nothing. If one patch in a group fails,
 the tree is restored to a snapshot and that group's configs stay off. A half-applied Droidspaces set would change
-`task_struct` layout and break vendor modules. Results are written to `wild-report.txt` in the build artifacts.
+`task_struct` layout and break vendor modules. Results are written to `gkid-report.txt` in the build artifacts.
 
 <details>
 <summary>Stock-compatibility guard rails</summary>
@@ -110,7 +98,7 @@ The phone loads hundreds of vendor modules built against Google's GKI ABI, so th
 |---|---|
 | `MODVERSIONS`, `PREEMPT`, `MODULE_UNLOAD` (vermagic flags `SMP preempt mod_unload modversions`) | Stripped from the fragment so they can never change. |
 | `LTO_NONE` and `CFI_CLANG` | Built with `--lto=none`, CFI left as stock. |
-| Module version CRC checks | CRC mismatch bypass applied, since struct changes from SUSFS/ZeroMount can shift CRCs. |
+| Module version CRC checks | CRC mismatch bypass applied, since struct changes from SUSFS/NoMount can shift CRCs. |
 | GKI protected-export enforcement | Protected export lists removed so the kernel does not refuse vendor modules. |
 | `ZRAM=m`, `ANDROID_BINDER_IPC_RUST=m` | Left as modules; the IPC namespace symbols Rust binder needs are exported. |
 
