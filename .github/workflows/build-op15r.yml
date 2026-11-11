@@ -580,6 +580,9 @@ jobs:
     - name: Package AnyKernel3
       run: |
         cp "$KERNEL_ROOT/bazel-bin/common/kernel_aarch64/Image" "$ANYKERNEL3/Image"
+        # the cloned template prints WildKernels' banner/links: replace with this project's own text
+        bash "$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/brand-anykernel.sh" "$ANYKERNEL3" \
+          "OnePlus 15R Kernel" "${{ inputs.release_version }}" "https://github.com/${{ github.repository }}"
         sed -i "s|^kernel.string=.*|kernel.string=OnePlus 15R ${KERNEL_LABEL:-${KERNEL_VER}.${SUBLEVEL} - ${ARTIFACT_BASE#OP15R-}}|" "$ANYKERNEL3/anykernel.sh"
         mkdir -p out
         cp "$KERNEL_ROOT/bazel-bin/common/kernel_aarch64/Image" out/Image
