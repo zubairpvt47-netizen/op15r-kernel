@@ -106,6 +106,10 @@ on:
         description: "CONTROL BUILD: no SukiSU/SUSFS/NoMount/GKID extras/BBG at all (stock source rebuilt)"
         type: boolean
         default: false
+      release_version:
+        description: "Kernel release version, shown in uname, the AnyKernel3 banner and the artifact name"
+        type: string
+        default: "v1.0.0"
       infra_tweaks:
         description: "Apply CRC-check bypass, protected-export removal and ABI-check bypass"
         type: boolean
@@ -205,7 +209,10 @@ jobs:
           [ "${{ inputs.gkid_nethunter }}" = "true" ] && SUF="$SUF-NetHunter"
           [ "${{ inputs.gkid_bbrv3 }}" = "true" ] && SUF="$SUF-BBRv3"
           [ "${{ inputs.lsm_mode }}" = "skip" ] && SUF="$SUF-lsmskip"
-          echo "ARTIFACT_BASE=OP15R-${KERNEL_VER}.${SL}-${ROOT}${SUF}" >> "$GITHUB_ENV"
+          REL="${{ inputs.release_version }}"
+          echo "KERNEL_REL=$REL" >> "$GITHUB_ENV"
+          echo "KERNEL_LABEL=Core $REL (${KERNEL_VER}.${SL}) - ${ROOT}${SUF}" >> "$GITHUB_ENV"
+          echo "ARTIFACT_BASE=OP15R-Core-${REL}-${KERNEL_VER}.${SL}-${ROOT}${SUF}" >> "$GITHUB_ENV"
         fi
         if [ -n "$EXPECT_COMMIT" ]; then
           case "$HEAD" in
@@ -529,7 +536,7 @@ jobs:
     - name: Clean build flags
       if: ${{ inputs.infra_tweaks }}
       working-directory: ${{ env.KERNEL_ROOT }}
-      run: bash "$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/clean-build-flags.sh" . "$KERNEL_VER" "SukiSU"  # keeps uname "-4k-SukiSU" across variants
+      run: bash "$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/clean-build-flags.sh" . "$KERNEL_VER" "OP15R-Core-${{ inputs.release_version }}"  # uname e.g. 6.12.69-android16-6-4k-OP15R-Core-v1.0.0
 
     - name: Build kernel (Kleaf/Bazel)
       working-directory: ${{ env.KERNEL_ROOT }}
@@ -573,7 +580,7 @@ jobs:
     - name: Package AnyKernel3
       run: |
         cp "$KERNEL_ROOT/bazel-bin/common/kernel_aarch64/Image" "$ANYKERNEL3/Image"
-        sed -i "s|^kernel.string=.*|kernel.string=OnePlus 15R ${KERNEL_VER}.${SUBLEVEL} - ${ARTIFACT_BASE#OP15R-}|" "$ANYKERNEL3/anykernel.sh"
+        sed -i "s|^kernel.string=.*|kernel.string=OnePlus 15R ${KERNEL_LABEL:-${KERNEL_VER}.${SUBLEVEL} - ${ARTIFACT_BASE#OP15R-}}|" "$ANYKERNEL3/anykernel.sh"
         mkdir -p out
         cp "$KERNEL_ROOT/bazel-bin/common/kernel_aarch64/Image" out/Image
         (cd "$ANYKERNEL3" && zip -r9 -q "$GITHUB_WORKSPACE/out/${ARTIFACT_BASE}-AnyKernel3.zip" .)
