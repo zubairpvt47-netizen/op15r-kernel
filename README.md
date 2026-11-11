@@ -24,7 +24,7 @@ This project rebuilds that same kernel for each firmware release, in CI, and add
 It tracks only the 15R, so every build here is matched to a specific firmware of this one phone.
 
 - **Matches your firmware.** Each build is pinned to the exact upstream commit your phone runs, so vendor modules keep working.
-- **Reproducible.** Everything is built from source by a public workflow. There are no prebuilt binaries in the repo.
+- **Reproducible.** Everything is built from source by a public workflow. The kernel is never committed; the only prebuilt binaries are the stock AnyKernel3 flasher helpers (`busybox`, `magiskboot`, ...) vendored unchanged in `android16-6.12/anykernel3/tools`.
 - **Safe by construction.** Feature groups apply atomically and the build keeps stock module-compatibility settings.
 
 ## Supported builds
@@ -159,6 +159,7 @@ or flash your saved `boot` image from recovery. The kernel zip only rewrites the
 .github/workflows/build-op15r.yml   single-job pipeline: sync, patch, configure, build, package
 android16-6.12/
   SukiSU-Ultra/patches/             ZeroMount VFS patch (re-port to SUSFS 2.3/2.4 pending)
+  anykernel3/                       vendored AnyKernel3 flasher template (own banner/flash log; see SOURCE.txt)
   build-helpers/                    config assembly, ABI-check bypass, LSM-slot, build-flag and BBG helpers
   defconfig.fragment                base / susfs / overlayfs / wild Kconfig sections
   root-pins.env                     pinned SukiSU Ultra (builtin) / KernelSU-Next (dev-susfs) + SUSFS commits
@@ -182,7 +183,8 @@ with OnePlus, Google, or any project credited below.
 | [susfs4ksu](https://gitlab.com/simonpunk/susfs4ksu) (simonpunk) | SUSFS |
 | [WildKernels/GKI_KernelSU_SUSFS](https://github.com/WildKernels/GKI_KernelSU_SUSFS) | Root/SUSFS pin pairs and SUSFS compatibility scripts |
 | [Enginex0/Super-Builders](https://github.com/Enginex0/Super-Builders) and [ZeroMount](https://github.com/enginex0/zeromount) | Enhanced SUSFS, ZeroMount, build pipeline |
-| [WildKernels](https://github.com/WildKernels) | Feature patches, AnyKernel3 |
+| [WildKernels](https://github.com/WildKernels) | Feature patches; base of the vendored AnyKernel3 flasher template |
+| [AnyKernel3](https://github.com/osm0sis/AnyKernel3) (osm0sis) | Flashable-zip framework |
 | [Baseband-guard](https://github.com/vc-teahouse/Baseband-guard) | Baseband Guard module |
 
 ## License

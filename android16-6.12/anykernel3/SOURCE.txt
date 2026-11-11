@@ -1,0 +1,7 @@
+AnyKernel3 flasher template, vendored from WildKernels/AnyKernel3 (branch gki-2.0,
+commit e1e9dce98430c5c6f231f7094a8c7f4ecaf50948, 2026-07-12), itself based on
+osm0sis' AnyKernel3. The WildKernels banner, links and thank-you lines were replaced
+with this project's own text. LICENSE is the upstream AnyKernel3 license (kept as required).
+The prebuilt helper binaries in tools/ (busybox, magiskboot, magiskpolicy, ...) come from
+that upstream template unchanged.
+@VERSION@ and @REPO_URL@ are filled in by the build workflow.
