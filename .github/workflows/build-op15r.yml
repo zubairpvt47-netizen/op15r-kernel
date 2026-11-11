@@ -144,7 +144,15 @@ jobs:
         df -h /
 
     - name: Install host tools
-      run: sudo apt-get install -y -qq lld binutils jq pigz zip dos2unix
+      run: |
+        # runner DNS/mirror hiccups are transient: refresh the index and retry instead of failing the build
+        for i in 1 2 3 4 5; do
+          sudo apt-get update -qq -o Acquire::Retries=3 \
+            && sudo apt-get install -y -qq --fix-missing -o Acquire::Retries=3 lld binutils jq pigz zip dos2unix \
+            && exit 0
+          echo "apt attempt $i failed, retrying in $((i*15))s"; sleep $((i*15))
+        done
+        exit 1
 
     - name: Fetch helpers (AnyKernel3 flasher, repo tool)
       run: |
