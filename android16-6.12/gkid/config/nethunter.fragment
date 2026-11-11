@@ -1,4 +1,5 @@
 # GKID NetHunter (any =y that would replace a stock =m module is dropped)
+# NOT included on purpose: CONFIG_MAC80211_MESH -- it raises LL_MAX_HEADER, which grows struct hh_cache and struct neighbour (vendor network modules use them; btfdiff-verified).
 CONFIG_SYSVIPC=y
 CONFIG_MODULES=y
 CONFIG_MODULE_UNLOAD=y
@@ -7,7 +8,6 @@ CONFIG_MODVERSIONS=y
 CONFIG_ANDROID_BINDER_IPC=y
 CONFIG_CFG80211_WEXT=n
 CONFIG_MAC80211=y
-CONFIG_MAC80211_MESH=y
 CONFIG_MAC80211_LEDS=y
 CONFIG_BT_HCIBTUSB=y
 CONFIG_BT_HCIBTUSB_BCM=y
