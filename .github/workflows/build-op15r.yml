@@ -84,6 +84,10 @@ on:
         description: "SUSFS kernel patches (needs add_ksu; off = isolation build)"
         type: boolean
         default: true
+      ksu_disable_safemode:
+        description: "Disable SukiSU's volume-key 'safe mode' (3 presses of either volume key before its boot check flags safe mode, blocks module install). Built-in KSU registers the key handler at kernel start, unlike an LKM."
+        type: boolean
+        default: true
       lsm_mode:
         description: "LSM slots: add_slot (count KSU/BBG in MAX_LSM_COUNT, keeps every LSM) or skip (SukiSU only: skip its LSM registration)"
         type: choice
@@ -288,6 +292,18 @@ jobs:
         PYEOF
         fi
         ls -l common/drivers/kernelsu
+
+    - name: Disable KSU volume-key safe mode
+      if: ${{ !inputs.clean_baseline && inputs.add_ksu && inputs.ksu_disable_safemode }}
+      working-directory: ${{ env.KERNEL_ROOT }}
+      run: |
+        set -euo pipefail
+        F="$KSU_DIR/kernel/runtime/ksud.c"
+        if [ ! -f "$F" ]; then F="$(grep -rl 'safe_mode_flag = true;' "$KSU_DIR/kernel" | head -1 || true)"; fi
+        [ -n "$F" ] && [ -f "$F" ] || { echo "::warning::no volume-key safe-mode code found in this root implementation (nothing to disable)"; exit 0; }
+        [ "$(grep -c 'safe_mode_flag = true;' "$F")" = "1" ] || { echo "::error::expected exactly one 'safe_mode_flag = true;' in $F"; exit 1; }
+        sed -i 's/safe_mode_flag = true;/(void)0; \/* volume-key safe mode disabled by build (ksu_disable_safemode) *\//' "$F"
+        grep -n 'safe mode disabled by build' "$F"
 
     - name: LSM slots (MAX_LSM_COUNT) / SukiSU LSM registration
       if: ${{ !inputs.clean_baseline }}
