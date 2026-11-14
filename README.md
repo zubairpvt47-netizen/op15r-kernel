@@ -44,7 +44,7 @@ New firmware gets a new row. Builds for older firmware stay listed so you can ma
 |---|---|
 | **SukiSU Ultra** or **KernelSU-Next** | Built into the kernel at a pinned commit (`ksu_variant`): SukiSU Ultra `builtin` branch (works with the v4.3.x manager) or KernelSU-Next `dev-susfs`. No LKM or `init_boot` patch needed. |
 | **SUSFS** | Upstream susfs4ksu (v2.3 with SukiSU, v2.4 with KernelSU-Next): path, mount, kstat and map hiding, uname and cmdline/bootconfig spoofing, open redirect, symbol hiding. |
-| **NoMount** | Built-in systemless path redirection at the VFS layer (`fs/nomount`, v2.2.0), driven by the NoMount module. |
+| **NoMount** | Built-in systemless path redirection at the VFS layer (`fs/nomount`, v2.3.0), driven by the NoMount module. |
 | **Baseband Guard** | Security module that blocks writes to critical baseband/modem block devices. |
 
 ### Networking

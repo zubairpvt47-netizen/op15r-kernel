@@ -34,9 +34,9 @@ on:
         type: boolean
         default: true
       nomount_ref:
-        description: "NoMount git ref (tag or 40-char sha); default = v2.2.0"
+        description: "NoMount git ref (tag or 40-char sha); default = v2.3.0"
         type: string
-        default: "bf1847f98fed382369c43bfd652cd93774b9b8e3"
+        default: "ab93ee32a589ccb021257b3c1f280e058520d844"
       gkid_ntsync:
         description: "NTSync (Winlator/GameHub); the driver is already in the r54 tree, this enables it"
         type: boolean
