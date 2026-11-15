@@ -441,6 +441,29 @@ jobs:
         cp "$S/fs/"* fs/
         cp "$S/include/linux/"* include/linux/
         cp "$S/$P" ./
+        # susfs4ksu bug (395a8c0 .. 9b0b13f): the selinux-hide code calls SUSFS_LOGI_RL/LOGE_RL, but the
+        # !CONFIG_KSU_SUSFS_ENABLE_LOG branch only stubs SUSFS_LOGI/LOGE -> implicit-declaration error
+        # with logging off (WildKernels builds with logging on, so it never hits this). Add no-op stubs.
+        python3 - fs/susfs.c <<'PYEOF'
+        import sys
+        p = sys.argv[1]
+        s = open(p, encoding='utf-8').read()
+        if 'SUSFS_LOGI_RL' not in s:
+            raise SystemExit(0)
+        stub = ('#ifndef SUSFS_LOGI_RL\n#define SUSFS_LOGI_RL(fmt, ...)\n#endif\n'
+                '#ifndef SUSFS_LOGE_RL\n#define SUSFS_LOGE_RL(fmt, ...)\n#endif\n\n')
+        anchor = '/* selinux hide */'
+        if '#ifndef SUSFS_LOGI_RL' in s:
+            raise SystemExit(0)
+        i = s.find(anchor)
+        if i < 0:
+            i = s.find('static DEFINE_MUTEX(')
+        if i < 0:
+            sys.exit('fs/susfs.c: no anchor for the SUSFS_LOG*_RL stubs')
+        s = s[:i] + stub + s[i:]
+        open(p, 'w', encoding='utf-8').write(s)
+        print('fs/susfs.c: added SUSFS_LOGI_RL/LOGE_RL no-op stubs for ENABLE_LOG=n')
+        PYEOF
         # same sequence as WildKernels .github/actions/susfs-patches for android16-6.12
         python3 "$WK/susfs_guard_priority_helpers.py" fs/susfs.c
         grep -q 'i_user_ns' include/linux/fs.h || python3 "$WK/susfs_idmap_compat.py" fs/susfs.c
