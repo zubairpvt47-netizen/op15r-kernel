@@ -3,11 +3,11 @@
 # OnePlus 15R Kernel
 
 **A custom GKI kernel for the OnePlus 15R (CPH2767)**
-**Core** — SukiSU Ultra · SUSFS · NoMount · Baseband Guard · GKID networking features
+**Core** — KernelSU · SUSFS · NoMount · Baseband Guard · GKID networking features
 
 ![Device](https://img.shields.io/badge/device-OnePlus%2015R%20(CPH2767)-eb0028?style=flat-square)
 ![Kernel](https://img.shields.io/badge/kernel-GKI%20android16--6.12-3ddc84?style=flat-square)
-![Root](https://img.shields.io/badge/root-SukiSU%20Ultra-8250df?style=flat-square)
+![Root](https://img.shields.io/badge/root-KernelSU-8250df?style=flat-square)
 ![Built by](https://img.shields.io/badge/built%20by-GitHub%20Actions-2b3137?style=flat-square)
 ![License](https://img.shields.io/badge/license-GPL--3.0-lightgrey?style=flat-square)
 
@@ -42,8 +42,8 @@ New firmware gets a new row. Builds for older firmware stay listed so you can ma
 ### Root and hiding
 | | |
 |---|---|
-| **SukiSU Ultra** or **KernelSU-Next** | Built into the kernel at a pinned commit (`ksu_variant`): SukiSU Ultra `builtin` branch (works with the v4.3.x manager) or KernelSU-Next `dev-susfs`. No LKM or `init_boot` patch needed. |
-| **SUSFS** | Upstream susfs4ksu (v2.3 with SukiSU, v2.4 with KernelSU-Next): path, mount, kstat and map hiding, uname and cmdline/bootconfig spoofing, open redirect, symbol hiding. |
+| **KernelSU** (default), **SukiSU Ultra** or **KernelSU-Next** | Built into the kernel at a pinned commit (`ksu_variant`): official tiann/KernelSU `main` with the susfs4ksu enable patch (default, official KernelSU manager), SukiSU Ultra `builtin` (v4.3.x manager) or KernelSU-Next `dev-susfs`. No LKM or `init_boot` patch needed. |
+| **SUSFS** | Upstream susfs4ksu (v2.4 with KernelSU and KernelSU-Next, v2.3 with SukiSU): path, mount, kstat and map hiding, uname and cmdline/bootconfig spoofing, open redirect, symbol hiding. |
 | **NoMount** | Built-in systemless path redirection at the VFS layer (`fs/nomount`, v2.3.0), driven by the NoMount module. |
 | **Baseband Guard** | Security module that blocks writes to critical baseband/modem block devices. |
 

@@ -1,7 +1,8 @@
 name: OnePlus 15R kernel
 
 # Rebuilds the exact GKI kernel the phone ships for a given firmware (Google kernel/common
-# release tag) and adds SukiSU Ultra (built-in) + enhanced SUSFS + the GKID-Kernels feature set
+# release tag) and adds a built-in root implementation (official KernelSU by default; SukiSU Ultra or
+# KernelSU-Next optional) + SUSFS + the GKID-Kernels feature set
 # (Baseband Guard, NoMount, NTSync, DroidSpaces, NetHunter, BBRv3, networking configs).
 # GKID's performance/battery tuning patches are intentionally NOT applied. To target a new
 # firmware, read `uname -r` on the phone (the g<sha> part), find the matching
@@ -44,7 +45,7 @@ on:
       gkid_droidspaces:
         description: "DroidSpaces (SYSVIPC/IPC_NS/PID_NS/POSIX_MQUEUE with GKID's kABI padding patch)"
         type: boolean
-        default: true
+        default: false
       gkid_nethunter:
         description: "NetHunter (mac80211 monitor/injection patch + rtw88 USB drivers; experimental, build separately)"
         type: boolean
@@ -62,12 +63,13 @@ on:
         type: boolean
         default: false
       ksu_variant:
-        description: "Root implementation: sukisu (SukiSU Ultra 'builtin', manager v4.3.x) or next (KernelSU-Next dev-susfs)"
+        description: "Root implementation: kernelsu (official tiann/KernelSU + SUSFS enable patch), sukisu (SukiSU Ultra 'builtin', manager v4.3.x) or next (KernelSU-Next dev-susfs)"
         type: choice
         options:
+          - kernelsu
           - sukisu
           - next
-        default: sukisu
+        default: kernelsu
       ksu_commit:
         description: "Override the root implementation commit (40-char sha; empty = pin from root-pins.env)"
         type: string
@@ -85,7 +87,7 @@ on:
         type: boolean
         default: true
       ksu_disable_safemode:
-        description: "Disable SukiSU's volume-key 'safe mode' (3 presses of either volume key before its boot check flags safe mode, blocks module install). Built-in KSU registers the key handler at kernel start, unlike an LKM."
+        description: "Disable the root implementation's volume-key 'safe mode' (vol-down presses during boot disable all modules). Built-in KSU registers the key handler at kernel start, unlike an LKM."
         type: boolean
         default: true
       lsm_mode:
@@ -109,7 +111,7 @@ on:
       release_version:
         description: "Kernel release version, shown in uname, the AnyKernel3 banner and the artifact name"
         type: string
-        default: "v1.0.0"
+        default: "v2.0.0"
       infra_tweaks:
         description: "Apply CRC-check bypass, protected-export removal and ABI-check bypass"
         type: boolean
@@ -205,7 +207,7 @@ jobs:
         if [ "${{ inputs.clean_baseline }}" = "true" ]; then
           echo "ARTIFACT_BASE=OP15R-${KERNEL_VER}.${SL}-CLEAN-infra-${{ inputs.infra_tweaks }}" >> "$GITHUB_ENV"
         else
-          case "${{ inputs.ksu_variant }}" in next) ROOT=KSUNext ;; *) ROOT=SukiSU ;; esac
+          case "${{ inputs.ksu_variant }}" in next) ROOT=KSUNext ;; kernelsu) ROOT=KernelSU ;; sukisu) ROOT=SukiSU ;; *) echo "::error::unknown ksu_variant"; exit 1 ;; esac
           [ "${{ inputs.add_ksu }}" = "true" ] || ROOT=NoKSU
           echo "ROOT_LABEL=$ROOT" >> "$GITHUB_ENV"
           SUF=""
@@ -233,7 +235,8 @@ jobs:
     - name: Load source pins
       run: |
         set -a; . "$GITHUB_WORKSPACE/$VERSION_DIR/root-pins.env"; set +a
-        for v in SUKISU_REPO SUKISU_PIN SUKISU_SUSFS_PIN NEXT_REPO NEXT_PIN NEXT_SUSFS_PIN NEXT_SUSFS_PICKS \
+        for v in KERNELSU_REPO KERNELSU_PIN KERNELSU_SUSFS_PIN \
+                 SUKISU_REPO SUKISU_PIN SUKISU_SUSFS_PIN NEXT_REPO NEXT_PIN NEXT_SUSFS_PIN NEXT_SUSFS_PICKS \
                  SUSFS_REPO SUSFS_BRANCH WK_REPO WK_PIN; do
           echo "$v=${!v}" >> "$GITHUB_ENV"
         done
@@ -249,6 +252,7 @@ jobs:
         case "$VARIANT" in
           # NB: KERNEL_ROOT is this repo's android16-6.12/ folder, which already has SukiSU-Ultra/
           # (the ZeroMount patch) - so the clone dirs must not be named SukiSU-Ultra.
+          kernelsu) REPO="$KERNELSU_REPO"; PIN="$KERNELSU_PIN"; DIR=ksu-tiann; UPSTREAM=main ;;
           sukisu) REPO="$SUKISU_REPO"; PIN="$SUKISU_PIN"; DIR=ksu-sukisu; UPSTREAM=main ;;
           next)   REPO="$NEXT_REPO";   PIN="$NEXT_PIN";   DIR=ksu-next;   UPSTREAM=dev ;;
           *) echo "::error::unknown ksu_variant $VARIANT"; exit 1 ;;
@@ -272,6 +276,15 @@ jobs:
         if [ -f "$DIR/kernel/Kbuild" ] && grep -q 'BASE_BRANCH' "$DIR/kernel/Kbuild"; then
           printf '\n# CI: deterministic KSU_VERSION\nKSU_VERSION := %s\nKSU_VERSION_TAG := "%s"\n' \
             "$((30000 + COUNT))" "$TAG" >> "$DIR/kernel/Kbuild"
+        fi
+        # Official KernelSU's Kbuild runs `git rev-list --count HEAD` inside GIT_ROOT; inside the
+        # Kleaf sandbox .git may be unreachable and the version silently becomes 16 (the manager
+        # then reports "kernel too old"). Pin the count the same way as the other variants.
+        if [ "$VARIANT" = "kernelsu" ]; then
+          KB="$DIR/kernel/Kbuild"
+          [ "$(grep -c '^ifdef KSU_GIT_VERSION_VALID' "$KB")" = "1" ] || { echo "::error::KernelSU Kbuild version anchor not found"; exit 1; }
+          sed -i "s/^ifdef KSU_GIT_VERSION_VALID/# CI: deterministic KSU_VERSION\nKSU_GIT_VERSION := ${COUNT}\nKSU_GIT_VERSION_VALID := 1\nifdef KSU_GIT_VERSION_VALID/" "$KB"
+          grep -n -A2 'CI: deterministic KSU_VERSION' "$KB"
         fi
         echo "$DIR @ $(git -C "$DIR" log -1 --format='%h %cs %s') | KSU_VERSION=$((30000 + COUNT)) tag=$TAG"
         ln -s "$(realpath --relative-to=common/drivers "$PWD/$DIR/kernel")" common/drivers/kernelsu
@@ -314,6 +327,16 @@ jobs:
       working-directory: ${{ env.KERNEL_ROOT }}
       run: |
         set -euo pipefail
+        if [ "${{ inputs.ksu_variant }}" = "kernelsu" ]; then
+          # official KernelSU: runtime/ksud_integration.c counts vol-down presses; >= 3 = safe mode
+          F="$KSU_DIR/kernel/runtime/ksud_integration.c"
+          [ -f "$F" ] || { echo "::error::$F not found"; exit 1; }
+          OLD='    return count >= 3;'
+          [ "$(grep -cxF "$OLD" "$F")" = "1" ] || { echo "::error::expected exactly one '$OLD' in $F"; exit 1; }
+          sed -i 's/^    return count >= 3;$/    (void)count; return false; \/* volume-key safe mode disabled by build (ksu_disable_safemode) *\//' "$F"
+          grep -n 'safe mode disabled by build' "$F"
+          exit 0
+        fi
         F="$KSU_DIR/kernel/runtime/ksud.c"
         if [ ! -f "$F" ]; then F="$(grep -rl 'safe_mode_flag = true;' "$KSU_DIR/kernel" | head -1 || true)"; fi
         [ -n "$F" ] && [ -f "$F" ] || { echo "::warning::no volume-key safe-mode code found in this root implementation (nothing to disable)"; exit 0; }
@@ -386,6 +409,7 @@ jobs:
       run: |
         set -euo pipefail
         case "${{ inputs.ksu_variant }}" in
+          kernelsu) PIN="$KERNELSU_SUSFS_PIN"; PICKS="" ;;
           sukisu) PIN="$SUKISU_SUSFS_PIN"; PICKS="" ;;
           next)   PIN="$NEXT_SUSFS_PIN";   PICKS="$NEXT_SUSFS_PICKS" ;;
         esac
@@ -425,6 +449,35 @@ jobs:
         # apply_susfs_compat.py leaves .orig backups for hunks applied at an offset; real failures
         # leave .rej, which the reject check below still catches
         echo "offset backups: $(find . -name '*.orig' | wc -l)"; find . -name '*.orig' -delete
+
+    - name: Enable SUSFS in official KernelSU (10_enable_susfs_for_ksu)
+      # tiann/KernelSU main carries no SUSFS glue; susfs4ksu ships the KSU-side patch, paired
+      # commit-for-commit with the SUSFS pin (same sequence as WildKernels' susfs action).
+      if: ${{ !inputs.clean_baseline && inputs.add_susfs && inputs.add_ksu && inputs.ksu_variant == 'kernelsu' }}
+      working-directory: ${{ env.KERNEL_ROOT }}/${{ env.KSU_DIR }}
+      run: |
+        set -euo pipefail
+        P="$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch"
+        [ -f "$P" ] || { echo "::error::missing $P"; exit 1; }
+        patch -p1 --forward --no-backup-if-mismatch < "$P"
+        grep -q '^config KSU_SUSFS$' kernel/Kconfig || { echo "::error::KSU_SUSFS not defined after the enable patch"; exit 1; }
+        # selinux_hide.c on 6.6+ clang: bare `if (fn)` on a function/pointer is -Werror
+        # (WildKernels "Fix selinux_hide pointer-bool-conversion", ported verbatim)
+        for f in $(find kernel -name selinux_hide.c); do
+          if grep -q "extern void security_dump_masked_av_fn" "$f"; then
+            sed -i 's/if (security_dump_masked_av_fn)/if (\&security_dump_masked_av_fn)/g; s/if (security_dump_masked_av_fn != NULL)/if (\&security_dump_masked_av_fn != NULL)/g; s/if (context_struct_compute_av_fn)/if (\&context_struct_compute_av_fn)/g; s/if (context_struct_compute_av_fn != NULL)/if (\&context_struct_compute_av_fn != NULL)/g' "$f"
+            echo "patched $f (function form)"
+          elif grep -q "if (security_dump_masked_av_fn" "$f"; then
+            sed -i 's/if (security_dump_masked_av_fn)/if (security_dump_masked_av_fn != NULL)/g; s/if (context_struct_compute_av_fn)/if (context_struct_compute_av_fn != NULL)/g' "$f"
+            echo "patched $f (pointer form)"
+          fi
+        done
+        # a registered KSU LSM (security_add_hooks) needs an LSM slot; that was the old boot panic.
+        # Official KernelSU patches hooks at runtime, so none may appear even after the patch.
+        if grep -rn 'security_add_hooks(' kernel --include='*.c' | grep -v '^\s*//'; then
+          echo "::error::KernelSU registers an LSM via security_add_hooks - needs an LSM slot (add to the LSM step)"; exit 1
+        fi
+        echo "no security_add_hooks() in KernelSU: only BBG needs an LSM slot"
 
     - name: Add NoMount (fs/nomount, built-in)
       # NoMount is a self-contained driver (own inode/dir ops, no hooks in core VFS files), so it
@@ -585,6 +638,24 @@ jobs:
         done
         echo "--- vermagic flags in binary:"
         strings "$IMG" | grep -m2 'SMP preempt' || true
+        CFG=$(find bazel-bin/common bazel-out -name .config -path '*kernel_aarch64*' -type f 2>/dev/null | head -1)
+        [ -n "$CFG" ] || CFG=$(find bazel-bin/common -name .config -type f 2>/dev/null | head -1)
+        if [ "${{ inputs.add_ksu }}" = "true" ] && [ "${{ inputs.clean_baseline }}" != "true" ]; then
+          [ -n "$CFG" ] || { echo "::error::final .config not found for the KSU/SUSFS assert"; exit 1; }
+          echo "--- final config: $CFG"
+          WANT="CONFIG_KSU"
+          if [ "${{ inputs.add_susfs }}" = "true" ]; then
+            WANT="$WANT CONFIG_KSU_SUSFS CONFIG_KSU_SUSFS_SUS_PATH CONFIG_KSU_SUSFS_SUS_MOUNT CONFIG_KSU_SUSFS_SUS_KSTAT CONFIG_KSU_SUSFS_SUS_MAP CONFIG_KSU_SUSFS_SPOOF_UNAME"
+          fi
+          [ "${{ inputs.add_nomount }}" = "true" ] && WANT="$WANT CONFIG_NOMOUNT"
+          [ "${{ inputs.add_bbg }}" = "true" ] && WANT="$WANT CONFIG_BBG"
+          MISS=0
+          for c in $WANT; do
+            if grep -qx "${c}=y" "$CFG"; then echo "ok   $c=y"; else echo "::error::$c is not =y in the final config"; MISS=1; fi
+          done
+          grep -E '^CONFIG_KSU' "$CFG" || true
+          [ "$MISS" = "0" ] || exit 1
+        fi
 
     - name: Package AnyKernel3
       run: |
