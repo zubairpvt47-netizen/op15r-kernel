@@ -333,8 +333,8 @@ jobs:
       working-directory: ${{ env.KERNEL_ROOT }}
       run: |
         set -euo pipefail
-        if [ "${{ inputs.ksu_variant }}" = "kernelsu" ]; then
-          # official KernelSU: runtime/ksud_integration.c counts vol-down presses; >= 3 = safe mode
+        if [ "${{ inputs.ksu_variant }}" = "kernelsu" ] || [ "${{ inputs.ksu_variant }}" = "next" ]; then
+          # official KernelSU and KernelSU-Next: runtime/ksud_integration.c counts vol-down presses; >= 3 = safe mode
           F="$KSU_DIR/kernel/runtime/ksud_integration.c"
           [ -f "$F" ] || { echo "::error::$F not found"; exit 1; }
           OLD='    return count >= 3;'
