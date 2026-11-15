@@ -58,6 +58,10 @@ on:
         description: "GKID networking/filesystem configs (ip_set, IPv6 NAT, netfilter/tc extras, TTL, exFAT/VFAT ...)"
         type: boolean
         default: true
+      add_cifs:
+        description: "CIFS/SMB client built in (mount Windows/NAS shares; netfs becomes built-in, WildKernels config)"
+        type: boolean
+        default: false
       gkid_net_defaults:
         description: "Make BBR the default congestion control and fq_codel the default qdisc (a tuning choice; off by default)"
         type: boolean
@@ -219,6 +223,8 @@ jobs:
           [ "${{ inputs.gkid_droidspaces }}" = "true" ] && SUF="$SUF-Droid"
           [ "${{ inputs.gkid_nethunter }}" = "true" ] && SUF="$SUF-NetHunter"
           [ "${{ inputs.gkid_bbrv3 }}" = "true" ] && SUF="$SUF-BBRv3"
+          [ "${{ inputs.add_cifs }}" = "true" ] && SUF="$SUF-CIFS"
+          [ "${{ inputs.gkid_net_defaults }}" = "true" ] && SUF="$SUF-BBRdef"
           [ "${{ inputs.lsm_mode }}" = "skip" ] && SUF="$SUF-lsmskip"
           REL="${{ inputs.release_version }}"
           echo "KERNEL_REL=$REL" >> "$GITHUB_ENV"
@@ -528,6 +534,19 @@ jobs:
         GKID_NET_DEFAULTS: ${{ inputs.gkid_net_defaults }}
       run: bash "$GITHUB_WORKSPACE/scripts/gkid-extras.sh" . "$GITHUB_WORKSPACE/$VERSION_DIR/gkid" "$GKID_FRAGMENT" "$GKID_REPORT"
 
+    - name: CIFS/SMB client (built in)
+      # WildKernels .github/actions/cifs for android16-6.12: CIFS=y pulls NETFS_SUPPORT=y, and Kleaf
+      # fails if its GKI module list still names fs/netfs/netfs.ko. Stock loads netfs.ko from
+      # system_dlkm (9pnet uses it); with netfs built in that insmod returns EEXIST, which
+      # libmodprobe treats as already loaded.
+      if: ${{ inputs.add_cifs && !inputs.clean_baseline }}
+      working-directory: ${{ env.KERNEL_ROOT }}/common
+      run: |
+        set -euo pipefail
+        printf '%s\n' '# [cifs]' CONFIG_NETWORK_FILESYSTEMS=y CONFIG_NETFS_SUPPORT=y CONFIG_KEYS=y \
+          CONFIG_CIFS=y CONFIG_CIFS_XATTR=y CONFIG_CIFS_POSIX=y >> "$GKID_FRAGMENT"
+        python3 "$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/cifs_modules_fix.py" "$PWD" fs/netfs/netfs.ko
+
     - name: Fail on patch rejects
       run: |
         REJ=$(find "$KERNEL_ROOT/common" "$KERNEL_ROOT/$KSU_DIR" \( -name '*.rej' -o -name '*.orig' \) 2>/dev/null | head -20)
@@ -649,6 +668,8 @@ jobs:
           fi
           [ "${{ inputs.add_nomount }}" = "true" ] && WANT="$WANT CONFIG_NOMOUNT"
           [ "${{ inputs.add_bbg }}" = "true" ] && WANT="$WANT CONFIG_BBG"
+          [ "${{ inputs.add_cifs }}" = "true" ] && WANT="$WANT CONFIG_CIFS CONFIG_NETFS_SUPPORT"
+          [ "${{ inputs.gkid_net_defaults }}" = "true" ] && WANT="$WANT CONFIG_DEFAULT_BBR"
           MISS=0
           for c in $WANT; do
             if grep -qx "${c}=y" "$CFG"; then echo "ok   $c=y"; else echo "::error::$c is not =y in the final config"; MISS=1; fi
