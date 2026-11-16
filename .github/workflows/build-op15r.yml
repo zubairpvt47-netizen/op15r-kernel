@@ -318,6 +318,13 @@ jobs:
         # leave .rej, which the reject check below still catches
         echo "offset backups: $(find . -name '*.orig' | wc -l)"; find . -name '*.orig' -delete
 
+    - name: Add ZeroMount (VFS driver)
+      # The ZeroMount hunks sit inside SUSFS context, so they apply only on top of the SUSFS patch, and
+      # before NoMount (both add an entry at the end of fs/Kconfig). No fuzz: a context mismatch must fail.
+      if: ${{ inputs.add_zeromount && inputs.add_susfs && inputs.add_ksu && !inputs.clean_baseline }}
+      working-directory: ${{ env.KERNEL_ROOT }}/common
+      run: patch -p1 -F0 --forward --no-backup-if-mismatch < "$GITHUB_WORKSPACE/$VERSION_DIR/zeromount/60_zeromount-${ANDROID_VER}-${KERNEL_VER}.patch"
+
     - name: Enable SUSFS in KernelSU (10_enable_susfs_for_ksu)
       # tiann/KernelSU main carries no SUSFS glue; susfs4ksu ships the KSU-side patch, paired
       # commit-for-commit with the SUSFS pin (same sequence as WildKernels' susfs action).
@@ -423,7 +430,7 @@ jobs:
       run: |
         FRAGMENT="$GITHUB_WORKSPACE/$VERSION_DIR/defconfig.fragment"
         HELPERS="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers"
-        # no build/build.sh on 6.12 -> Kleaf; ZRAM stays a module like stock, so no --zram
+        # no build/build.sh on 6.12 -> Kleaf applies the fragment via --defconfig_fragment
         bash "$HELPERS/assemble-defconfig.sh" "$FRAGMENT" "$DEFCONFIG_FRAGMENT" "$DEFCONFIG" --susfs --overlayfs --kleaf
 
         # GKID groups that applied cleanly (+ config-only groups)
@@ -433,6 +440,11 @@ jobs:
         if [ "${{ inputs.add_nomount }}" = "true" ] && [ -f common/fs/nomount/Kconfig ]; then
           sed -i '/^CONFIG_NOMOUNT=/d;/^# CONFIG_NOMOUNT is not set/d' "$DEFCONFIG_FRAGMENT"
           echo "CONFIG_NOMOUNT=y" >> "$DEFCONFIG_FRAGMENT"
+        fi
+        # ZeroMount config (built-in; only if its patch was applied)
+        if [ "${{ inputs.add_zeromount }}" = "true" ] && grep -q '^config ZEROMOUNT' common/fs/Kconfig; then
+          sed -i '/^CONFIG_ZEROMOUNT=/d;/^# CONFIG_ZEROMOUNT is not set/d' "$DEFCONFIG_FRAGMENT"
+          echo "CONFIG_ZEROMOUNT=y" >> "$DEFCONFIG_FRAGMENT"
         fi
 
         # drop CONFIG_KSU_* symbols that don't exist in this tree
