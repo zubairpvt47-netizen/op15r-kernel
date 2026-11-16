@@ -68,10 +68,18 @@ group() {
 }
 
 # ---------------------------------------------------------------- NTSync
-# r54 already carries drivers/misc/ntsync.c; only the config is needed.
+# r54 carries an old drivers/misc/ntsync.c but its Kconfig entry says "depends on BROKEN", so
+# CONFIG_NTSYNC=y alone is silently dropped (no /dev/ntsync). Same as WildKernels' ntsync action for
+# android16-6.12 (WildKernels/kernel_patches common/ntsync @10c98a49): remove the stock copy, drop the
+# BROKEN dependency, install the current driver.
 ntsync_group() {
-  [ -f drivers/misc/ntsync.c ] && [ -f include/uapi/linux/ntsync.h ] || { log "  no ntsync driver in this tree"; return 1; }
   grep -q 'config NTSYNC' drivers/misc/Kconfig || { log "  no NTSYNC Kconfig symbol"; return 1; }
+  grep -q 'obj-$(CONFIG_NTSYNC)' drivers/misc/Makefile || { log "  no NTSYNC Makefile rule"; return 1; }
+  rm -f include/uapi/linux/ntsync.h drivers/misc/ntsync.c
+  apply_one "$GK/patches/ntsync_compat_android16-6.12.patch" || return 1
+  apply_one "$GK/patches/ntsync_base.patch" || return 1
+  [ -f drivers/misc/ntsync.c ] && [ -f include/uapi/linux/ntsync.h ] || { log "  ntsync driver files missing after patch"; return 1; }
+  if grep -A3 '^config NTSYNC' drivers/misc/Kconfig | grep -q 'depends on BROKEN'; then log "  NTSYNC still depends on BROKEN"; return 1; fi
   echo "CONFIG_NTSYNC=y" >> "$FRAG.group"
 }
 

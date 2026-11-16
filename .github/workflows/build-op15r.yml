@@ -691,6 +691,7 @@ jobs:
           fi
           [ "${{ inputs.add_nomount }}" = "true" ] && WANT="$WANT CONFIG_NOMOUNT"
           [ "${{ inputs.add_bbg }}" = "true" ] && WANT="$WANT CONFIG_BBG"
+          [ "${{ inputs.gkid_ntsync }}" = "true" ] && WANT="$WANT CONFIG_NTSYNC"
           [ "${{ inputs.add_cifs }}" = "true" ] && WANT="$WANT CONFIG_CIFS CONFIG_NETFS_SUPPORT"
           [ "${{ inputs.gkid_net_defaults }}" = "true" ] && WANT="$WANT CONFIG_DEFAULT_BBR"
           MISS=0
