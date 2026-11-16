@@ -1,7 +1,7 @@
 name: OnePlus 15R kernel
 
 # Rebuilds the exact GKI kernel the phone ships for a given firmware (Google kernel/common
-# release tag) with official KernelSU built in, plus SUSFS, NoMount, ZeroMount, Baseband Guard, NTSync,
+# release tag) with KernelSU-Next built in, plus SUSFS, NoMount, ZeroMount, Baseband Guard, NTSync,
 # the networking/filesystem configs and CIFS. To target a new firmware, read `uname -r` on the
 # phone (the g<sha> part), find the matching android16-6.12-<YYYY-MM>_r<N> tag and pass it as
 # common_ref / release_branch.
@@ -57,7 +57,7 @@ on:
         type: boolean
         default: true
       ksu_commit:
-        description: "Override the KernelSU commit (40-char sha; empty = pin from root-pins.env)"
+        description: "Override the KernelSU-Next commit (40-char sha; empty = pin from root-pins.env)"
         type: string
         default: ""
       susfs_commit:
@@ -65,7 +65,7 @@ on:
         type: string
         default: ""
       add_ksu:
-        description: "KernelSU built into the kernel (off = root only via external LKM)"
+        description: "KernelSU-Next built into the kernel (off = root only via external LKM)"
         type: boolean
         default: true
       add_susfs:
@@ -90,7 +90,7 @@ permissions:
 
 jobs:
   build:
-    name: "KernelSU + SUSFS + NoMount + ZeroMount"
+    name: "KernelSU-Next + SUSFS + NoMount + ZeroMount"
     runs-on: ubuntu-latest
     timeout-minutes: 240
     env:
@@ -175,7 +175,7 @@ jobs:
         if [ "${{ inputs.clean_baseline }}" = "true" ]; then
           echo "ARTIFACT_BASE=OP15R-${KERNEL_VER}.${SL}-CLEAN-infra-${{ inputs.infra_tweaks }}" >> "$GITHUB_ENV"
         else
-          ROOT=KernelSU
+          ROOT=KSUNext
           [ "${{ inputs.add_ksu }}" = "true" ] || ROOT=NoKSU
           echo "ROOT_LABEL=$ROOT" >> "$GITHUB_ENV"
           SUF=""
@@ -201,20 +201,20 @@ jobs:
     - name: Load source pins
       run: |
         set -a; . "$GITHUB_WORKSPACE/$VERSION_DIR/root-pins.env"; set +a
-        for v in KERNELSU_REPO KERNELSU_PIN SUSFS_REPO SUSFS_BRANCH SUSFS_PIN WK_REPO WK_PIN; do
+        for v in KSUNEXT_REPO KSUNEXT_PIN SUSFS_REPO SUSFS_BRANCH SUSFS_PIN SUSFS_PICKS WK_REPO WK_PIN; do
           echo "$v=${!v}" >> "$GITHUB_ENV"
         done
 
-    - name: Integrate KernelSU
+    - name: Integrate KernelSU-Next
       if: ${{ !inputs.clean_baseline && inputs.add_ksu }}
       working-directory: ${{ env.KERNEL_ROOT }}
       env:
         KSU_OVERRIDE: ${{ inputs.ksu_commit }}
       run: |
         set -euo pipefail
-        REPO="$KERNELSU_REPO"; DIR=ksu-tiann
-        PIN="${KSU_OVERRIDE:-$KERNELSU_PIN}"
-        [[ "$PIN" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::KernelSU commit must be a full 40-char sha"; exit 1; }
+        REPO="$KSUNEXT_REPO"; DIR=ksu-next
+        PIN="${KSU_OVERRIDE:-$KSUNEXT_PIN}"
+        [[ "$PIN" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::KernelSU-Next commit must be a full 40-char sha"; exit 1; }
         [ ! -e common/drivers/kernelsu ] || { echo "::error::common/drivers/kernelsu already exists"; exit 1; }
         [ ! -e "$DIR" ] || { echo "::error::$KERNEL_ROOT/$DIR already exists"; exit 1; }
         echo "KSU_DIR=$DIR" >> "$GITHUB_ENV"
@@ -222,18 +222,20 @@ jobs:
         for i in 1 2 3 4 5; do git clone --no-checkout "$REPO" "$DIR" && break; rm -rf "./$DIR"; sleep 8; done
         git -C "$DIR" fetch origin "$PIN"
         git -C "$DIR" checkout --detach "$PIN"
-        [ "$(git -C "$DIR" rev-parse HEAD)" = "$PIN" ] || { echo "::error::KernelSU commit mismatch"; exit 1; }
-        # Deterministic KSU_VERSION: 30000 + commits at the merge-base with main. KernelSU's Kbuild runs
-        # `git rev-list --count HEAD` inside GIT_ROOT; inside the Kleaf sandbox .git may be unreachable and
-        # the version silently becomes 16 (the manager then reports "kernel too old"), so pin the count.
-        BASE="$(git -C "$DIR" merge-base HEAD origin/main 2>/dev/null || echo "$PIN")"
+        [ "$(git -C "$DIR" rev-parse HEAD)" = "$PIN" ] || { echo "::error::KernelSU-Next commit mismatch"; exit 1; }
+        # Deterministic KSU_VERSION: 30000 + commits at the merge-base with upstream dev (the pinned fork
+        # mirrors dev and adds SUSFS on top). Kbuild's own heuristic reads "HEAD", which on a detached
+        # checkout is the literal "HEAD", so it would count the wrong ref.
+        BASE="$(git -C "$DIR" merge-base HEAD origin/dev 2>/dev/null || echo "$PIN")"
         COUNT="$(git -C "$DIR" rev-list --count "$BASE")"
         TAG="$(git -C "$DIR" describe --tags --abbrev=0 "$BASE" 2>/dev/null || echo unknown)"
         KB="$DIR/kernel/Kbuild"
-        [ "$(grep -c '^ifdef KSU_GIT_VERSION_VALID' "$KB")" = "1" ] || { echo "::error::KernelSU Kbuild version anchor not found"; exit 1; }
-        sed -i "s/^ifdef KSU_GIT_VERSION_VALID/# CI: deterministic KSU_VERSION\nKSU_GIT_VERSION := ${COUNT}\nKSU_GIT_VERSION_VALID := 1\nifdef KSU_GIT_VERSION_VALID/" "$KB"
-        grep -n -A2 'CI: deterministic KSU_VERSION' "$KB"
-        echo "$DIR @ $(git -C "$DIR" log -1 --format='%h %cs %s') | KSU_VERSION=$((30000 + COUNT)) tag=$TAG"
+        grep -q 'BASE_BRANCH' "$KB" || { echo "::error::KernelSU-Next Kbuild version anchor not found"; exit 1; }
+        printf '\n# CI: deterministic KSU_VERSION\nKSU_VERSION := %s\nKSU_VERSION_TAG := "%s"\n' "$((30000 + COUNT))" "$TAG" >> "$KB"
+        echo "KSU_BASE_COMMIT=$BASE" >> "$GITHUB_ENV"
+        echo "$DIR @ $(git -C "$DIR" log -1 --format='%h %cs %s') | KSU_VERSION=$((30000 + COUNT)) manager-base=${BASE:0:12} tag=$TAG"
+        # Kbuild hard-errors at parse time while .config has neither KPROBES nor KSU_SUSFS
+        sed -i 's/$(error "KernelSU requires either CONFIG_KPROBES=y or CONFIG_KSU_SUSFS=y")/$(warning "KernelSU requires either CONFIG_KPROBES=y or CONFIG_KSU_SUSFS=y")/' "$KB"
         ln -s "$(realpath --relative-to=common/drivers "$PWD/$DIR/kernel")" common/drivers/kernelsu
         grep -q 'obj-$(CONFIG_KSU) += kernelsu/' common/drivers/Makefile ||
           printf '\nobj-$(CONFIG_KSU) += kernelsu/\n' >> common/drivers/Makefile
@@ -244,7 +246,7 @@ jobs:
     - name: LSM slot for Baseband Guard (MAX_LSM_COUNT)
       # MAX_LSM_COUNT is derived from the upstream LSM configs only and all 5 slots are used, so a static
       # LSM such as Baseband Guard would make the kernel drop the last ordered LSM (bpf). Count it.
-      # KernelSU itself registers no LSM (it patches hooks at runtime), so it needs no slot.
+      # KernelSU-Next itself registers no LSM (it patches hooks at runtime), so it needs no slot.
       if: ${{ inputs.add_bbg && !inputs.clean_baseline }}
       working-directory: ${{ env.KERNEL_ROOT }}
       run: bash "$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/add-lsm-slots.sh" common BBG=CONFIG_BBG
@@ -266,6 +268,9 @@ jobs:
         S="$GITHUB_WORKSPACE/susfs4ksu"
         for i in 1 2 3 4 5; do git clone -b "$SUSFS_BRANCH" "$SUSFS_REPO" "$S" && break; rm -rf "$S"; sleep 8; done
         git -C "$S" checkout --detach "$PIN"
+        # pershoot's SUSFS coexistence commits (they touch only kernel_patches/fs/susfs.c)
+        git -C "$S" fetch https://gitlab.com/pershoot/susfs4ksu.git $SUSFS_PICKS
+        for c in $SUSFS_PICKS; do git -C "$S" cherry-pick "$c"; done
         echo "SUSFS $(git -C "$S" log -1 --format='%h %cs %s') | $(grep -h 'define SUSFS_VERSION' "$S/kernel_patches/include/linux/susfs.h")"
         for i in 1 2 3 4 5; do git clone --no-checkout "$WK_REPO" "$GITHUB_WORKSPACE/wk" && break; rm -rf "$GITHUB_WORKSPACE/wk"; sleep 8; done
         git -C "$GITHUB_WORKSPACE/wk" checkout --detach "$WK_PIN"
@@ -325,19 +330,13 @@ jobs:
       working-directory: ${{ env.KERNEL_ROOT }}/common
       run: patch -p1 -F0 --forward --no-backup-if-mismatch < "$GITHUB_WORKSPACE/$VERSION_DIR/zeromount/60_zeromount-${ANDROID_VER}-${KERNEL_VER}.patch"
 
-    - name: Enable SUSFS in KernelSU (10_enable_susfs_for_ksu)
-      # tiann/KernelSU main carries no SUSFS glue; susfs4ksu ships the KSU-side patch, paired
-      # commit-for-commit with the SUSFS pin (same sequence as WildKernels' susfs action).
+    - name: Check SUSFS integration in KernelSU-Next
+      # KernelSU-Next ships its SUSFS glue; susfs4ksu's kernel patch is applied separately above.
       if: ${{ !inputs.clean_baseline && inputs.add_susfs && inputs.add_ksu }}
       working-directory: ${{ env.KERNEL_ROOT }}/${{ env.KSU_DIR }}
       run: |
         set -euo pipefail
-        P="$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch"
-        [ -f "$P" ] || { echo "::error::missing $P"; exit 1; }
-        patch -p1 --forward --no-backup-if-mismatch < "$P"
-        grep -q '^config KSU_SUSFS$' kernel/Kconfig || { echo "::error::KSU_SUSFS not defined after the enable patch"; exit 1; }
-        # selinux_hide.c on 6.6+ clang: bare `if (fn)` on a function/pointer is -Werror
-        # (WildKernels "Fix selinux_hide pointer-bool-conversion", ported verbatim)
+        grep -q '^config KSU_SUSFS$' kernel/Kconfig || { echo "::error::KSU_SUSFS is not defined by KernelSU-Next"; exit 1; }
         for f in $(find kernel -name selinux_hide.c); do
           if grep -q "extern void security_dump_masked_av_fn" "$f"; then
             sed -i 's/if (security_dump_masked_av_fn)/if (\&security_dump_masked_av_fn)/g; s/if (security_dump_masked_av_fn != NULL)/if (\&security_dump_masked_av_fn != NULL)/g; s/if (context_struct_compute_av_fn)/if (\&context_struct_compute_av_fn)/g; s/if (context_struct_compute_av_fn != NULL)/if (\&context_struct_compute_av_fn != NULL)/g' "$f"
@@ -347,12 +346,12 @@ jobs:
             echo "patched $f (pointer form)"
           fi
         done
-        # a registered KSU LSM (security_add_hooks) needs an LSM slot; that was the old boot panic.
-        # Official KernelSU patches hooks at runtime, so none may appear even after the patch.
+        # a registered root LSM (security_add_hooks) needs an LSM slot; that was the old boot panic.
+        # KernelSU-Next patches hooks at runtime, so none may appear.
         if grep -rn 'security_add_hooks(' kernel --include='*.c' | grep -v '^\s*//'; then
-          echo "::error::KernelSU registers an LSM via security_add_hooks - needs an LSM slot (add to the LSM step)"; exit 1
+          echo "::error::KernelSU-Next registers an LSM via security_add_hooks - needs an LSM slot"; exit 1
         fi
-        echo "no security_add_hooks() in KernelSU: only BBG needs an LSM slot"
+        echo "no security_add_hooks() in KernelSU-Next: only BBG needs an LSM slot"
 
     - name: Add NoMount (fs/nomount, built-in)
       # NoMount is a self-contained driver (own inode/dir ops, no hooks in core VFS files), so it

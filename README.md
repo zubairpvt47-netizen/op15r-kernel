@@ -3,11 +3,11 @@
 # OnePlus 15R Kernel
 
 **A custom GKI kernel for the OnePlus 15R (CPH2767)**
-KernelSU · SUSFS · NoMount · ZeroMount · Baseband Guard · NTSync · networking · CIFS
+KernelSU-Next · SUSFS · NoMount · ZeroMount · Baseband Guard · NTSync · networking · CIFS
 
 ![Device](https://img.shields.io/badge/device-OnePlus%2015R%20(CPH2767)-eb0028?style=flat-square)
 ![Kernel](https://img.shields.io/badge/kernel-GKI%20android16--6.12-3ddc84?style=flat-square)
-![Root](https://img.shields.io/badge/root-KernelSU-8250df?style=flat-square)
+![Root](https://img.shields.io/badge/root-KernelSU--Next-8250df?style=flat-square)
 ![Built by](https://img.shields.io/badge/built%20by-GitHub%20Actions-2b3137?style=flat-square)
 ![License](https://img.shields.io/badge/license-GPL--3.0-lightgrey?style=flat-square)
 
@@ -34,8 +34,8 @@ Current default: firmware `CPH2767_17.0.0.106(EX01)`, kernel 6.12.69, upstream s
 ### Root and mount hiding
 | | |
 |---|---|
-| **KernelSU** | Official [tiann/KernelSU](https://github.com/tiann/KernelSU) `main`, built into the kernel at a pinned commit. No LKM or `init_boot` patch needed. Use the manager built from the same commit (see Installing). |
-| **SUSFS** | susfs4ksu with its KernelSU enable patch: path, mount, kstat and map hiding, uname and cmdline/bootconfig spoofing, open redirect, symbol hiding, priority UID filter. Debug logging off. |
+| **KernelSU-Next** | [pershoot's `dev-susfs`](https://github.com/pershoot/KernelSU-Next) fork of [KernelSU-Next](https://github.com/KernelSU-Next/KernelSU-Next) (SUSFS glue included), built into the kernel at a pinned commit. No LKM or `init_boot` patch needed. Use the KernelSU-Next manager built from the same upstream commit (see Installing). |
+| **SUSFS** | susfs4ksu plus two coexistence commits from pershoot's fork: path, mount, kstat and map hiding, uname and cmdline/bootconfig spoofing, open redirect, symbol hiding, priority UID filter. Debug logging off. |
 | **NoMount** | Built-in systemless path redirection at the VFS layer (`fs/nomount`), driven by the NoMount module. |
 | **ZeroMount** | Built-in VFS path redirection (`/dev/zeromount`, `fs/zeromount.c`, needs SUSFS), driven by the ZeroMount module. Present alongside NoMount; use one module at a time. |
 | **Baseband Guard** | Security module that blocks writes to critical baseband/modem block devices. It gets its own LSM slot so the stock BPF LSM is not displaced. |
@@ -52,8 +52,8 @@ Current default: firmware `CPH2767_17.0.0.106(EX01)`, kernel 6.12.69, upstream s
 Each build runs these steps in order:
 
 1. **Sync** Google's `kernel/common` at the exact release tag of the phone's kernel, and verify the commit.
-2. **KernelSU** is added as a built-in at a pinned commit, with `KSU_VERSION` pinned from the commit count.
-3. The pinned **SUSFS** patch and KernelSU enable patch are applied with WildKernels' compatibility helpers.
+2. **KernelSU-Next** (`dev-susfs`) is added as a built-in at a pinned commit, with `KSU_VERSION` pinned from the commit count at its merge-base with upstream `dev`.
+3. The pinned **SUSFS** patch (plus the two coexistence commits) is applied with WildKernels' compatibility helpers.
 4. **NoMount** and **ZeroMount** are added as built-ins.
 5. **NTSync** is applied atomically (rolled back if any patch fails) and the networking configs are added.
 6. **Baseband Guard**, its LSM slot and the Kconfig fragment are added.
@@ -111,7 +111,7 @@ Requirements: an **unlocked bootloader**, `adb` and `fastboot`, and **your own p
    done
    ```
 2. **Flash** the AnyKernel3 zip from your recovery.
-3. **Root.** KernelSU is built in, so use a clean `init_boot` (remove any LKM-patched one) and install the manager APK built from the same KernelSU commit (the pin in `root-pins.env`; KernelSU's CI publishes it as `KernelSU_v<version>-<n>-g<sha>_<code>-release.apk`). The manager and kernel must share the same UAPI version, otherwise the manager reports that it or the kernel needs an update.
+3. **Root.** KernelSU-Next is built in, so use a clean `init_boot` (remove any LKM-patched one) and install the KernelSU-Next manager built from the upstream commit the kernel was based on (the build log prints it as `manager-base`). The manager and kernel must share the same UAPI version, otherwise the manager reports that it or the kernel needs an update.
 
 ## Rollback
 
@@ -132,7 +132,7 @@ android16-6.12/
   gkid/                             networking config fragments and the NTSync patches
   zeromount/                        ZeroMount VFS patch
   defconfig.fragment                base / susfs / overlayfs Kconfig sections
-  root-pins.env                     pinned KernelSU, SUSFS and WildKernels helper commits
+  root-pins.env                     pinned KernelSU-Next (dev-susfs), SUSFS (+ coexistence commits) and WildKernels helper commits
 scripts/gkid-extras.sh              NTSync (atomic, with rollback) and networking configs, with report
 tools/repack_boot.py                builds a test-bootable image from a new kernel
 ```
@@ -148,7 +148,7 @@ with OnePlus, Google, or any project credited below.
 | Project | Used for |
 |---|---|
 | [Android Common Kernel](https://android.googlesource.com/kernel/common) (Google) | Base source |
-| [KernelSU](https://github.com/tiann/KernelSU) (tiann) | Root solution |
+| [KernelSU-Next](https://github.com/KernelSU-Next/KernelSU-Next) and [pershoot's dev-susfs](https://github.com/pershoot/KernelSU-Next) | Root solution |
 | [susfs4ksu](https://gitlab.com/simonpunk/susfs4ksu) (simonpunk) | SUSFS |
 | [WildKernels](https://github.com/WildKernels) | SUSFS compatibility scripts, NTSync patches, base of the vendored AnyKernel3 flasher template |
 | [NoMount](https://github.com/maxsteeel/nomount) (maxsteeel) | NoMount driver |
