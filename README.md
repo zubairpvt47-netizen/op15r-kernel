@@ -3,7 +3,7 @@
 # OnePlus 15R Kernel
 
 **A custom GKI kernel for the OnePlus 15R (CPH2767)**
-**Core** — KernelSU · SUSFS · NoMount · Baseband Guard · GKID networking features
+KernelSU · SUSFS · NoMount · ZeroMount · Baseband Guard · NTSync · networking · CIFS
 
 ![Device](https://img.shields.io/badge/device-OnePlus%2015R%20(CPH2767)-eb0028?style=flat-square)
 ![Kernel](https://img.shields.io/badge/kernel-GKI%20android16--6.12-3ddc84?style=flat-square)
@@ -11,7 +11,7 @@
 ![Built by](https://img.shields.io/badge/built%20by-GitHub%20Actions-2b3137?style=flat-square)
 ![License](https://img.shields.io/badge/license-GPL--3.0-lightgrey?style=flat-square)
 
-[Supported builds](#supported-builds) · [Features](#features) · [How it works](#how-it-works) · [Build](#building) · [Install](#installing) · [Rollback](#rollback) · [Credits](#credits)
+[Features](#features) · [How it works](#how-it-works) · [Build](#building) · [Install](#installing) · [Rollback](#rollback) · [Credits](#credits)
 
 </div>
 
@@ -20,74 +20,44 @@
 ## Overview
 
 The OnePlus 15R ships Google's unmodified **GKI** kernel, and Google publishes the exact source for it.
-This project rebuilds that same kernel for each firmware release, in CI, and adds a curated feature set on top.
-It tracks only the 15R, so every build here is matched to a specific firmware of this one phone.
+This project rebuilds that same kernel for the phone's firmware, in CI, and adds the feature set below.
 
-- **Matches your firmware.** Each build is pinned to the exact upstream commit your phone runs, so vendor modules keep working.
+- **Matches your firmware.** The build is pinned to the exact upstream commit your phone runs (`expect_commit`), so vendor modules keep working.
 - **Reproducible.** Everything is built from source by a public workflow. The kernel is never committed; the only prebuilt binaries are the stock AnyKernel3 flasher helpers (`busybox`, `magiskboot`, ...) vendored unchanged in `android16-6.12/anykernel3/tools`.
-- **Safe by construction.** Feature groups apply atomically and the build keeps stock module-compatibility settings.
+- **Safe by construction.** The NTSync step is atomic, the final `.config` is checked for every enabled feature, and the build keeps stock module-compatibility settings.
 
-## Supported builds
-
-| Release | Firmware | Kernel | Upstream source | Status |
-|---|---|---|---|---|
-| **Core v1.0.0** | `CPH2767_17.0.0.106(EX01)` | 6.12.69 | `android16-6.12-2026-03_r54` (`242e1a07f878`) | See the [release page](../../releases) |
-
-`uname -r` reports `6.12.69-android16-6-4k-OP15R-Core-v1.0.0`.
-
-New firmware gets a new row. Builds for older firmware stay listed so you can match them to the ROM you run.
+Current default: firmware `CPH2767_17.0.0.106(EX01)`, kernel 6.12.69, upstream source `android16-6.12-2026-03_r54` (`242e1a07f878`).
+`uname -r` reports `6.12.69-android16-6-4k-OP15R-Core-<release_version>`.
 
 ## Features
 
-### Root and hiding
+### Root and mount hiding
 | | |
 |---|---|
-| **KernelSU** (default), **SukiSU Ultra** or **KernelSU-Next** | Built into the kernel at a pinned commit (`ksu_variant`): official tiann/KernelSU `main` with the susfs4ksu enable patch (default, official KernelSU manager), SukiSU Ultra `builtin` (v4.3.x manager) or KernelSU-Next `dev-susfs`. No LKM or `init_boot` patch needed. |
-| **SUSFS** | Upstream susfs4ksu (v2.4 with KernelSU and KernelSU-Next, v2.3 with SukiSU): path, mount, kstat and map hiding, uname and cmdline/bootconfig spoofing, open redirect, symbol hiding. |
-| **NoMount** | Built-in systemless path redirection at the VFS layer (`fs/nomount`, v2.3.0), driven by the NoMount module. |
-| **Baseband Guard** | Security module that blocks writes to critical baseband/modem block devices. |
+| **KernelSU** | Official [tiann/KernelSU](https://github.com/tiann/KernelSU) `main`, built into the kernel at a pinned commit. No LKM or `init_boot` patch needed. Use the manager built from the same commit (see Installing). |
+| **SUSFS** | susfs4ksu with its KernelSU enable patch: path, mount, kstat and map hiding, uname and cmdline/bootconfig spoofing, open redirect, symbol hiding, priority UID filter. Debug logging off. |
+| **NoMount** | Built-in systemless path redirection at the VFS layer (`fs/nomount`), driven by the NoMount module. |
+| **ZeroMount** | Built-in VFS path redirection (`/dev/zeromount`, `fs/zeromount.c`, needs SUSFS), driven by the ZeroMount module. Present alongside NoMount; use one module at a time. |
+| **Baseband Guard** | Security module that blocks writes to critical baseband/modem block devices. It gets its own LSM slot so the stock BPF LSM is not displaced. |
 
-### Networking
+### Extras
 | | |
 |---|---|
-| **BBR** | Selectable TCP congestion control, alongside CUBIC (default stays CUBIC). |
-| **Queue disciplines** | `fq`, `fq_codel`, `codel`, `htb`, `tbf`, `sfq`, `prio`, `multiq`, `netem`, `ingress`. |
-| **ip_set** | Bitmap, hash and list set types (up to 65534 sets), plus `xt_set` and `addrtype` matches. |
-| **IPv6 NAT** | `ip6table_nat` and IPv6 masquerade. |
-| **netfilter extras** | `TTL`/`HL`, `DSCP`, `CONNMARK`, `CLASSIFY`, `IDLETIMER`, `NFLOG`, `HMARK` targets; `string`, `u32`, `time`, `quota`, `statistic`, `socket`, `mac`, `limit`, `length`, `policy` matches. |
-
-### Filesystems
-| | |
-|---|---|
-| **Overlay support** | `TMPFS_XATTR` and `TMPFS_POSIX_ACL`, so overlay-based module mounting works on `/data` and tmpfs. |
-
-### Optional feature groups
-Off in the stable Core build, available as workflow inputs and built separately: **NTSync**, **Droidspaces**
-(with kABI padding so struct layouts stay compatible with stock vendor modules), **NetHunter** and **BBRv3**.
-Each group applies atomically and is reverted if any of its patches fails.
-
-### Not included
-- **Performance and battery tuning patches** (memory-op rewrites, wakelock and scheduler changes): the stock kernel's behaviour is kept.
-- **ZeroMount**: replaced by NoMount.
-- **HMBird/SCX scheduler**, **ZRAM LZ4K/LZ4KD**, **OnePlus vendor-module blacklisting**: not part of GKI.
-- **`CONFIG_IPV6_SUBTREES` and `MAC80211_MESH`**: they change struct layouts that vendor modules use.
-- **SUSFS debug logging** (`KSU_SUSFS_ENABLE_LOG`): off in release builds.
+| **NTSync** | NT synchronization primitives for Winlator/GameHub (`/dev/ntsync`). Replaces the stock driver, whose Kconfig entry is marked `BROKEN`, with the current one. |
+| **Networking** | BBR (default congestion control) with fq_codel (default qdisc), Westwood, HTCP, `fq`, CAKE, ip_set (up to 65534 sets), IPv6 NAT, and the `TTL`/`HL`, `DSCP`, `CONNMARK`, `CLASSIFY`, `IDLETIMER`, `NFLOG`, `HMARK` netfilter targets and matches. |
+| **Filesystems** | NTFS3 (read/write USB-OTG drives), exFAT, VFAT, MSDOS, CIFS/SMB client, tmpfs xattr/ACL. |
 
 ## How it works
 
 Each build runs these steps in order:
 
 1. **Sync** Google's `kernel/common` at the exact release tag of the phone's kernel, and verify the commit.
-2. **SukiSU Ultra** or **KernelSU-Next** is added as a built-in at a pinned commit, and the kernel gets extra LSM slots so it (and Baseband Guard) can register without displacing a stock LSM.
-3. The pinned upstream **SUSFS** patch is applied with WildKernels' compatibility helpers.
-4. **NoMount** is added as a built-in (`fs/nomount`).
-5. Optional **GKID** feature groups (NTSync, Droidspaces, NetHunter, BBRv3) are applied one by one, each rolled back if any of its patches fails.
-6. **Baseband Guard** and the Kconfig fragment are added.
-7. **Build** with Kleaf/Bazel, then package an AnyKernel3 zip and the raw `Image`.
-
-**Atomic feature groups.** NTSync, Droidspaces, NetHunter and BBRv3 are each all-or-nothing. If one patch in a group fails,
-the tree is restored to a snapshot and that group's configs stay off. A half-applied Droidspaces set would change
-`task_struct` layout and break vendor modules. Results are written to `gkid-report.txt` in the build artifacts.
+2. **KernelSU** is added as a built-in at a pinned commit, with `KSU_VERSION` pinned from the commit count.
+3. The pinned **SUSFS** patch and KernelSU enable patch are applied with WildKernels' compatibility helpers.
+4. **NoMount** and **ZeroMount** are added as built-ins.
+5. **NTSync** is applied atomically (rolled back if any patch fails) and the networking configs are added.
+6. **Baseband Guard**, its LSM slot and the Kconfig fragment are added.
+7. **Build** with Kleaf/Bazel, check the final `.config` for every enabled feature, then package an AnyKernel3 zip and the raw `Image`.
 
 <details>
 <summary>Stock-compatibility guard rails</summary>
@@ -98,9 +68,10 @@ The phone loads hundreds of vendor modules built against Google's GKI ABI, so th
 |---|---|
 | `MODVERSIONS`, `PREEMPT`, `MODULE_UNLOAD` (vermagic flags `SMP preempt mod_unload modversions`) | Stripped from the fragment so they can never change. |
 | `LTO_NONE` and `CFI_CLANG` | Built with `--lto=none`, CFI left as stock. |
-| Module version CRC checks | CRC mismatch bypass applied, since struct changes from SUSFS/NoMount can shift CRCs. |
+| Module version CRC checks | CRC mismatch bypass applied, since struct changes from SUSFS/NoMount/ZeroMount can shift CRCs. |
 | GKI protected-export enforcement | Protected export lists removed so the kernel does not refuse vendor modules. |
-| `ZRAM=m`, `ANDROID_BINDER_IPC_RUST=m` | Left as modules; the IPC namespace symbols Rust binder needs are exported. |
+| `ZRAM=m`, `ANDROID_BINDER_IPC_RUST=m` | Left as modules. |
+| `CONFIG_IPV6_SUBTREES`, `MAC80211_MESH` | Not enabled: they change struct layouts that vendor modules use. |
 
 </details>
 
@@ -114,9 +85,12 @@ The phone loads hundreds of vendor modules built against Google's GKI ABI, so th
 |---|---|
 | `*-AnyKernel3.zip` | Flashable from a custom recovery. Replaces only the kernel in the active slot's `boot`. |
 | `Image` | Raw arm64 kernel, for repacking or `fastboot boot` testing. |
-| `wild-report.txt` | Which feature groups and patches applied. |
-| `final-config.fragment` | The exact Kconfig fragment used. |
+| `gkid-report.txt` | Which feature groups and patches applied. |
+| `final-config.fragment` / `final.config` | The Kconfig fragment used and the final `.config`. |
+| `Module.symvers`, `System.map` | ABI evidence for checking vendor-module compatibility. |
 | `SHA256SUMS.txt` | Checksums for the files above. |
+
+Pins live in `android16-6.12/root-pins.env`; `ksu_commit`, `susfs_commit` and `nomount_ref` override them for a single run.
 
 **New firmware.** Read the kernel string on the phone (`uname -r`) and take the `g<sha>` part. Find the matching
 `android16-6.12-<YYYY-MM>_r<N>` tag in [`kernel/common`](https://android.googlesource.com/kernel/common), then run the
@@ -136,13 +110,8 @@ Requirements: an **unlocked bootloader**, `adb` and `fastboot`, and **your own p
      dd if=/dev/block/by-name/$p$S of=/sdcard/bk_$p$S.img
    done
    ```
-2. **Test boot without flashing.** A reboot returns you to your stock kernel:
-   ```sh
-   python tools/repack_boot.py stock_boot.img Image test_boot.img
-   fastboot boot test_boot.img
-   ```
-3. **Flash** the AnyKernel3 zip from your recovery.
-4. **Root.** SukiSU Ultra is built in, so restore a clean `init_boot` (remove any LKM-patched one) and install the SukiSU Ultra manager app.
+2. **Flash** the AnyKernel3 zip from your recovery.
+3. **Root.** KernelSU is built in, so use a clean `init_boot` (remove any LKM-patched one) and install the manager APK built from the same KernelSU commit (the pin in `root-pins.env`; KernelSU's CI publishes it as `KernelSU_v<version>-<n>-g<sha>_<code>-release.apk`). The manager and kernel must share the same UAPI version, otherwise the manager reports that it or the kernel needs an update.
 
 ## Rollback
 
@@ -158,12 +127,13 @@ or flash your saved `boot` image from recovery. The kernel zip only rewrites the
 ```
 .github/workflows/build-op15r.yml   single-job pipeline: sync, patch, configure, build, package
 android16-6.12/
-  SukiSU-Ultra/patches/             ZeroMount VFS patch (re-port to SUSFS 2.3/2.4 pending)
   anykernel3/                       vendored AnyKernel3 flasher template (own banner/flash log; see SOURCE.txt)
-  build-helpers/                    config assembly, ABI-check bypass, LSM-slot, build-flag and BBG helpers
-  defconfig.fragment                base / susfs / overlayfs / wild Kconfig sections
-  root-pins.env                     pinned SukiSU Ultra (builtin) / KernelSU-Next (dev-susfs) + SUSFS commits
-scripts/wild-extras.sh              atomic WildKernels patch groups with rollback and report
+  build-helpers/                    config assembly, ABI-check bypass, LSM-slot, build-flag, BBG and SUSFS compat helpers
+  gkid/                             networking config fragments and the NTSync patches
+  zeromount/                        ZeroMount VFS patch
+  defconfig.fragment                base / susfs / overlayfs Kconfig sections
+  root-pins.env                     pinned KernelSU, SUSFS and WildKernels helper commits
+scripts/gkid-extras.sh              NTSync (atomic, with rollback) and networking configs, with report
 tools/repack_boot.py                builds a test-bootable image from a new kernel
 ```
 
@@ -178,12 +148,12 @@ with OnePlus, Google, or any project credited below.
 | Project | Used for |
 |---|---|
 | [Android Common Kernel](https://android.googlesource.com/kernel/common) (Google) | Base source |
-| [SukiSU-Ultra](https://github.com/SukiSU-Ultra/SukiSU-Ultra) | Root solution |
-| [KernelSU-Next](https://github.com/KernelSU-Next/KernelSU-Next) ([pershoot dev-susfs](https://github.com/pershoot/KernelSU-Next)) | Root solution (alternative) |
+| [KernelSU](https://github.com/tiann/KernelSU) (tiann) | Root solution |
 | [susfs4ksu](https://gitlab.com/simonpunk/susfs4ksu) (simonpunk) | SUSFS |
-| [WildKernels/GKI_KernelSU_SUSFS](https://github.com/WildKernels/GKI_KernelSU_SUSFS) | Root/SUSFS pin pairs and SUSFS compatibility scripts |
-| [Enginex0/Super-Builders](https://github.com/Enginex0/Super-Builders) and [ZeroMount](https://github.com/enginex0/zeromount) | Enhanced SUSFS, ZeroMount, build pipeline |
-| [WildKernels](https://github.com/WildKernels) | Feature patches; base of the vendored AnyKernel3 flasher template |
+| [WildKernels](https://github.com/WildKernels) | SUSFS compatibility scripts, NTSync patches, base of the vendored AnyKernel3 flasher template |
+| [NoMount](https://github.com/maxsteeel/nomount) (maxsteeel) | NoMount driver |
+| [ZeroMount](https://github.com/enginex0/zeromount) and [Enginex0/Super-Builders](https://github.com/Enginex0/Super-Builders) | ZeroMount driver, build pipeline |
+| [GKID-Kernels](https://github.com/ahmed-alnassif/GKID-Kernels) | Networking and filesystem configs |
 | [AnyKernel3](https://github.com/osm0sis/AnyKernel3) (osm0sis) | Flashable-zip framework |
 | [Baseband-guard](https://github.com/vc-teahouse/Baseband-guard) | Baseband Guard module |
 

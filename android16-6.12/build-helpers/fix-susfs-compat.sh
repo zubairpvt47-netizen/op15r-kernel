@@ -117,50 +117,5 @@ else
     echo "fix-susfs-compat: susfs.c not found — skipping i_uid_into_mnt fix"
 fi
 
-# ---------------------------------------------------------------------------
-# Fix 6: setuid_hook.c — duplicate ksu_handle_setresuid on >= 6.8 kernels
-# SukiSU builtin branch defines ksu_handle_setresuid in both the SUSFS
-# #else block AND a separate 6.8+ MANUAL_HOOK block. When both
-# CONFIG_KSU_SUSFS and CONFIG_KSU_MANUAL_HOOK are defined, both compile,
-# causing a redefinition error. Remove the 6.8+ block.
-# ---------------------------------------------------------------------------
-SETUID="$KERNEL_DIR/drivers/kernelsu/setuid_hook.c"
-if [ -f "$SETUID" ]; then
-    DUPS=$(grep -c 'int ksu_handle_setresuid' "$SETUID")
-    if [ "$DUPS" -gt 1 ]; then
-        echo "fix-susfs-compat: removing duplicate ksu_handle_setresuid (6.8+ MANUAL_HOOK block)"
-        python3 - "$SETUID" << 'PYEOF'
-import sys
-path = sys.argv[1]
-with open(path) as f:
-    lines = f.readlines()
-start = next((i for i, l in enumerate(lines) if 'KERNEL_VERSION(6, 8, 0)' in l), None)
-if start is not None:
-    depth, end = 0, None
-    for i in range(start, len(lines)):
-        stripped = lines[i].strip()
-        if stripped.startswith('#if'):
-            depth += 1
-        elif stripped.startswith('#endif'):
-            depth -= 1
-            if depth == 0:
-                end = i
-                break
-    if end is not None:
-        del lines[start:end+1]
-        while lines and lines[-1].strip() == '':
-            lines.pop()
-        lines.append('\n')
-        with open(path, 'w') as f:
-            f.writelines(lines)
-        print(f"  removed lines {start+1}-{end+1}")
-PYEOF
-    else
-        echo "fix-susfs-compat: setuid_hook.c — no duplicate ksu_handle_setresuid"
-    fi
-else
-    echo "fix-susfs-compat: setuid_hook.c not found — skipping"
-fi
-
 echo "fix-susfs-compat: done"
 exit 0

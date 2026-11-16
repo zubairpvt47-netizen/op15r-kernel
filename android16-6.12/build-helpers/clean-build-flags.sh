@@ -3,7 +3,7 @@ set -euo pipefail
 
 KERNEL_ROOT="${1:?}"
 KERNEL_VER="${2:?}"
-SUFFIX="${3:-SukiSU}"
+SUFFIX="${3:-OP15R}"
 
 cd "$KERNEL_ROOT"
 

@@ -3,10 +3,10 @@
 #
 # MAX_LSM_COUNT (include/linux/lsm_count.h) is derived only from the upstream LSM configs. On this
 # kernel that is capability, selinux, safesetid, bpf, landlock = 5, and every slot is used, so:
-#   - KernelSU/SukiSU calling security_add_hooks() for a 6th LSM hits
-#     `panic("Too many LSMs registered")` ~0.4 s into boot (the old "hang at the logo");
 #   - a static LSM such as Baseband Guard makes append_ordered_lsm() WARN and silently drop the
 #     last ordered LSM (bpf), which also breaks anything that chains through the BPF LSM.
+#     (A module that registers itself with security_add_hooks() would instead panic the kernel
+#     with "Too many LSMs registered" at boot.)
 # Counting them gives each its own slot. The slot table (struct lsm_static_calls_table) is
 # private to security/security.c and not exported, so vendor modules are unaffected.
 #

@@ -1,15 +1,13 @@
 name: OnePlus 15R kernel
 
 # Rebuilds the exact GKI kernel the phone ships for a given firmware (Google kernel/common
-# release tag) and adds a built-in root implementation (official KernelSU by default; SukiSU Ultra or
-# KernelSU-Next optional) + SUSFS + the GKID-Kernels feature set
-# (Baseband Guard, NoMount, NTSync, DroidSpaces, NetHunter, BBRv3, networking configs).
-# GKID's performance/battery tuning patches are intentionally NOT applied. To target a new
-# firmware, read `uname -r` on the phone (the g<sha> part), find the matching
-# android16-6.12-<YYYY-MM>_r<N> tag and pass it as common_ref / release_branch.
+# release tag) with official KernelSU built in, plus SUSFS, NoMount, ZeroMount, Baseband Guard, NTSync,
+# the networking/filesystem configs and CIFS. To target a new firmware, read `uname -r` on the
+# phone (the g<sha> part), find the matching android16-6.12-<YYYY-MM>_r<N> tag and pass it as
+# common_ref / release_branch.
 #
 # Build pipeline adapted from Enginex0/Super-Builders (GPL-3.0); features from
-# ahmed-alnassif/GKID-Kernels (GPL-3.0), maxsteeel/nomount, Baseband-guard.
+# ahmed-alnassif/GKID-Kernels (GPL-3.0), maxsteeel/nomount, enginex0/zeromount, Baseband-guard.
 
 on:
   workflow_dispatch:
@@ -35,87 +33,53 @@ on:
         type: boolean
         default: true
       nomount_ref:
-        description: "NoMount git ref (tag or 40-char sha); default = v2.3.0"
+        description: "NoMount commit (40-char sha)"
         type: string
-        default: "ab93ee32a589ccb021257b3c1f280e058520d844"
-      gkid_ntsync:
-        description: "NTSync (Winlator/GameHub); the driver is already in the r54 tree, this enables it"
+        default: "00e7c5d4fdbf1e58decea3522b8eb7207a46d413"
+      add_zeromount:
+        description: "ZeroMount VFS path-redirection driver (/dev/zeromount; needs SUSFS and the ZeroMount module in userspace)"
         type: boolean
         default: true
-      gkid_droidspaces:
-        description: "DroidSpaces (SYSVIPC/IPC_NS/PID_NS/POSIX_MQUEUE with GKID's kABI padding patch)"
+      gkid_ntsync:
+        description: "NTSync (Winlator/GameHub); replaces the stock driver, which is marked BROKEN, with the current one"
         type: boolean
-        default: false
-      gkid_nethunter:
-        description: "NetHunter (mac80211 monitor/injection patch + rtw88 USB drivers; experimental, build separately)"
-        type: boolean
-        default: false
-      gkid_bbrv3:
-        description: "BBRv3 (GKID patch; r54 already carries part of the BBRv3 series, so it may be skipped and reported)"
-        type: boolean
-        default: false
+        default: true
       gkid_net:
         description: "GKID networking/filesystem configs (ip_set, IPv6 NAT, netfilter/tc extras, TTL, exFAT/VFAT ...)"
         type: boolean
         default: true
       add_cifs:
-        description: "CIFS/SMB client built in (mount Windows/NAS shares; netfs becomes built-in, WildKernels config)"
+        description: "CIFS/SMB client built in (mount Windows/NAS shares; netfs becomes built-in)"
         type: boolean
-        default: false
+        default: true
       gkid_net_defaults:
-        description: "Make BBR the default congestion control and fq_codel the default qdisc (a tuning choice; off by default)"
+        description: "Make BBR the default congestion control and fq_codel the default qdisc"
         type: boolean
-        default: false
-      ksu_variant:
-        description: "Root implementation: kernelsu (official tiann/KernelSU + SUSFS enable patch), sukisu (SukiSU Ultra 'builtin', manager v4.3.x) or next (KernelSU-Next dev-susfs)"
-        type: choice
-        options:
-          - kernelsu
-          - sukisu
-          - next
-        default: kernelsu
+        default: true
       ksu_commit:
-        description: "Override the root implementation commit (40-char sha; empty = pin from root-pins.env)"
+        description: "Override the KernelSU commit (40-char sha; empty = pin from root-pins.env)"
         type: string
         default: ""
       susfs_commit:
-        description: "Override the SUSFS commit (empty = the pin paired with ksu_variant)"
+        description: "Override the SUSFS commit (empty = pin from root-pins.env)"
         type: string
         default: ""
       add_ksu:
-        description: "Root implementation built into the kernel (off = root only via external LKM)"
+        description: "KernelSU built into the kernel (off = root only via external LKM)"
         type: boolean
         default: true
       add_susfs:
         description: "SUSFS kernel patches (needs add_ksu; off = isolation build)"
         type: boolean
         default: true
-      ksu_disable_safemode:
-        description: "Disable the root implementation's volume-key 'safe mode' (vol-down presses during boot disable all modules). Built-in KSU registers the key handler at kernel start, unlike an LKM."
-        type: boolean
-        default: true
-      lsm_mode:
-        description: "LSM slots: add_slot (count KSU/BBG in MAX_LSM_COUNT, keeps every LSM) or skip (SukiSU only: skip its LSM registration)"
-        type: choice
-        options:
-          - add_slot
-          - skip
-        default: add_slot
-      susfs_profile:
-        description: "SUSFS option set: full (all options) or core (drops unicode filter, hardening, symbol hiding, cmdline spoof, open/kstat redirect)"
-        type: choice
-        options:
-          - full
-          - core
-        default: full
       clean_baseline:
-        description: "CONTROL BUILD: no SukiSU/SUSFS/NoMount/GKID extras/BBG at all (stock source rebuilt)"
+        description: "CONTROL BUILD: the stock source rebuilt, without KernelSU, SUSFS, NoMount, ZeroMount, Baseband Guard or the extras"
         type: boolean
         default: false
       release_version:
         description: "Kernel release version, shown in uname, the AnyKernel3 banner and the artifact name"
         type: string
-        default: "v2.0.0"
+        default: "v2.2.0"
       infra_tweaks:
         description: "Apply CRC-check bypass, protected-export removal and ABI-check bypass"
         type: boolean
@@ -126,7 +90,7 @@ permissions:
 
 jobs:
   build:
-    name: "${{ inputs.ksu_variant }} + SUSFS + GKID features"
+    name: "KernelSU + SUSFS + NoMount + ZeroMount"
     runs-on: ubuntu-latest
     timeout-minutes: 240
     env:
@@ -177,7 +141,7 @@ jobs:
         {
           echo "KERNEL_ROOT=$KERNEL_ROOT"
           echo "DEFCONFIG=$KERNEL_ROOT/common/arch/arm64/configs/gki_defconfig"
-          echo "DEFCONFIG_FRAGMENT=$KERNEL_ROOT/common/arch/arm64/configs/sukisu_gki.fragment"
+          echo "DEFCONFIG_FRAGMENT=$KERNEL_ROOT/common/arch/arm64/configs/kernelsu_gki.fragment"
           echo "KERNEL_PATCHES=$GITHUB_WORKSPACE/$VERSION_DIR/gkid/patches"
           echo "ANYKERNEL3=$GITHUB_WORKSPACE/AnyKernel3"
           echo "GKID_REPORT=$GITHUB_WORKSPACE/gkid-report.txt"
@@ -211,21 +175,17 @@ jobs:
         if [ "${{ inputs.clean_baseline }}" = "true" ]; then
           echo "ARTIFACT_BASE=OP15R-${KERNEL_VER}.${SL}-CLEAN-infra-${{ inputs.infra_tweaks }}" >> "$GITHUB_ENV"
         else
-          case "${{ inputs.ksu_variant }}" in next) ROOT=KSUNext ;; kernelsu) ROOT=KernelSU ;; sukisu) ROOT=SukiSU ;; *) echo "::error::unknown ksu_variant"; exit 1 ;; esac
+          ROOT=KernelSU
           [ "${{ inputs.add_ksu }}" = "true" ] || ROOT=NoKSU
           echo "ROOT_LABEL=$ROOT" >> "$GITHUB_ENV"
           SUF=""
           [ "${{ inputs.add_susfs }}" = "true" ] && SUF="$SUF-SUSFS"
-          [ "${{ inputs.susfs_profile }}" = "core" ] && SUF="${SUF}core"
           [ "${{ inputs.add_nomount }}" = "true" ] && SUF="$SUF-NoMount"
+          [ "${{ inputs.add_zeromount }}" = "true" ] && SUF="$SUF-ZeroMount"
           [ "${{ inputs.add_bbg }}" = "true" ] && SUF="$SUF-BBG"
           [ "${{ inputs.gkid_ntsync }}" = "true" ] && SUF="$SUF-NTSync"
-          [ "${{ inputs.gkid_droidspaces }}" = "true" ] && SUF="$SUF-Droid"
-          [ "${{ inputs.gkid_nethunter }}" = "true" ] && SUF="$SUF-NetHunter"
-          [ "${{ inputs.gkid_bbrv3 }}" = "true" ] && SUF="$SUF-BBRv3"
           [ "${{ inputs.add_cifs }}" = "true" ] && SUF="$SUF-CIFS"
           [ "${{ inputs.gkid_net_defaults }}" = "true" ] && SUF="$SUF-BBRdef"
-          [ "${{ inputs.lsm_mode }}" = "skip" ] && SUF="$SUF-lsmskip"
           REL="${{ inputs.release_version }}"
           echo "KERNEL_REL=$REL" >> "$GITHUB_ENV"
           echo "KERNEL_LABEL=Core $REL (${KERNEL_VER}.${SL}) - ${ROOT}${SUF}" >> "$GITHUB_ENV"
@@ -241,30 +201,20 @@ jobs:
     - name: Load source pins
       run: |
         set -a; . "$GITHUB_WORKSPACE/$VERSION_DIR/root-pins.env"; set +a
-        for v in KERNELSU_REPO KERNELSU_PIN KERNELSU_SUSFS_PIN \
-                 SUKISU_REPO SUKISU_PIN SUKISU_SUSFS_PIN NEXT_REPO NEXT_PIN NEXT_SUSFS_PIN NEXT_SUSFS_PICKS \
-                 SUSFS_REPO SUSFS_BRANCH WK_REPO WK_PIN; do
+        for v in KERNELSU_REPO KERNELSU_PIN SUSFS_REPO SUSFS_BRANCH SUSFS_PIN WK_REPO WK_PIN; do
           echo "$v=${!v}" >> "$GITHUB_ENV"
         done
 
-    - name: Integrate root implementation (${{ inputs.ksu_variant }})
+    - name: Integrate KernelSU
       if: ${{ !inputs.clean_baseline && inputs.add_ksu }}
       working-directory: ${{ env.KERNEL_ROOT }}
       env:
         KSU_OVERRIDE: ${{ inputs.ksu_commit }}
-        VARIANT: ${{ inputs.ksu_variant }}
       run: |
         set -euo pipefail
-        case "$VARIANT" in
-          # NB: KERNEL_ROOT is this repo's android16-6.12/ folder, which already has SukiSU-Ultra/
-          # (the ZeroMount patch) - so the clone dirs must not be named SukiSU-Ultra.
-          kernelsu) REPO="$KERNELSU_REPO"; PIN="$KERNELSU_PIN"; DIR=ksu-tiann; UPSTREAM=main ;;
-          sukisu) REPO="$SUKISU_REPO"; PIN="$SUKISU_PIN"; DIR=ksu-sukisu; UPSTREAM=main ;;
-          next)   REPO="$NEXT_REPO";   PIN="$NEXT_PIN";   DIR=ksu-next;   UPSTREAM=dev ;;
-          *) echo "::error::unknown ksu_variant $VARIANT"; exit 1 ;;
-        esac
-        PIN="${KSU_OVERRIDE:-$PIN}"
-        [[ "$PIN" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::root commit must be a full 40-char sha"; exit 1; }
+        REPO="$KERNELSU_REPO"; DIR=ksu-tiann
+        PIN="${KSU_OVERRIDE:-$KERNELSU_PIN}"
+        [[ "$PIN" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::KernelSU commit must be a full 40-char sha"; exit 1; }
         [ ! -e common/drivers/kernelsu ] || { echo "::error::common/drivers/kernelsu already exists"; exit 1; }
         [ ! -e "$DIR" ] || { echo "::error::$KERNEL_ROOT/$DIR already exists"; exit 1; }
         echo "KSU_DIR=$DIR" >> "$GITHUB_ENV"
@@ -272,134 +222,32 @@ jobs:
         for i in 1 2 3 4 5; do git clone --no-checkout "$REPO" "$DIR" && break; rm -rf "./$DIR"; sleep 8; done
         git -C "$DIR" fetch origin "$PIN"
         git -C "$DIR" checkout --detach "$PIN"
-        [ "$(git -C "$DIR" rev-parse HEAD)" = "$PIN" ] || { echo "::error::root commit mismatch"; exit 1; }
-        # Deterministic KSU_VERSION (WildKernels root-setup rule): 30000 + commits at the merge-base
-        # with the upstream branch. Kbuild's own heuristic reads "HEAD" on a detached checkout.
-        BASE="$(git -C "$DIR" merge-base HEAD "origin/$UPSTREAM" 2>/dev/null || echo "$PIN")"
+        [ "$(git -C "$DIR" rev-parse HEAD)" = "$PIN" ] || { echo "::error::KernelSU commit mismatch"; exit 1; }
+        # Deterministic KSU_VERSION: 30000 + commits at the merge-base with main. KernelSU's Kbuild runs
+        # `git rev-list --count HEAD` inside GIT_ROOT; inside the Kleaf sandbox .git may be unreachable and
+        # the version silently becomes 16 (the manager then reports "kernel too old"), so pin the count.
+        BASE="$(git -C "$DIR" merge-base HEAD origin/main 2>/dev/null || echo "$PIN")"
         COUNT="$(git -C "$DIR" rev-list --count "$BASE")"
         TAG="$(git -C "$DIR" describe --tags --abbrev=0 "$BASE" 2>/dev/null || echo unknown)"
-        # (SukiSU builtin has no Kbuild: its Makefile derives the version from the full history)
-        if [ -f "$DIR/kernel/Kbuild" ] && grep -q 'BASE_BRANCH' "$DIR/kernel/Kbuild"; then
-          printf '\n# CI: deterministic KSU_VERSION\nKSU_VERSION := %s\nKSU_VERSION_TAG := "%s"\n' \
-            "$((30000 + COUNT))" "$TAG" >> "$DIR/kernel/Kbuild"
-        fi
-        # Official KernelSU's Kbuild runs `git rev-list --count HEAD` inside GIT_ROOT; inside the
-        # Kleaf sandbox .git may be unreachable and the version silently becomes 16 (the manager
-        # then reports "kernel too old"). Pin the count the same way as the other variants.
-        if [ "$VARIANT" = "kernelsu" ]; then
-          KB="$DIR/kernel/Kbuild"
-          [ "$(grep -c '^ifdef KSU_GIT_VERSION_VALID' "$KB")" = "1" ] || { echo "::error::KernelSU Kbuild version anchor not found"; exit 1; }
-          sed -i "s/^ifdef KSU_GIT_VERSION_VALID/# CI: deterministic KSU_VERSION\nKSU_GIT_VERSION := ${COUNT}\nKSU_GIT_VERSION_VALID := 1\nifdef KSU_GIT_VERSION_VALID/" "$KB"
-          grep -n -A2 'CI: deterministic KSU_VERSION' "$KB"
-        fi
+        KB="$DIR/kernel/Kbuild"
+        [ "$(grep -c '^ifdef KSU_GIT_VERSION_VALID' "$KB")" = "1" ] || { echo "::error::KernelSU Kbuild version anchor not found"; exit 1; }
+        sed -i "s/^ifdef KSU_GIT_VERSION_VALID/# CI: deterministic KSU_VERSION\nKSU_GIT_VERSION := ${COUNT}\nKSU_GIT_VERSION_VALID := 1\nifdef KSU_GIT_VERSION_VALID/" "$KB"
+        grep -n -A2 'CI: deterministic KSU_VERSION' "$KB"
         echo "$DIR @ $(git -C "$DIR" log -1 --format='%h %cs %s') | KSU_VERSION=$((30000 + COUNT)) tag=$TAG"
         ln -s "$(realpath --relative-to=common/drivers "$PWD/$DIR/kernel")" common/drivers/kernelsu
         grep -q 'obj-$(CONFIG_KSU) += kernelsu/' common/drivers/Makefile ||
           printf '\nobj-$(CONFIG_KSU) += kernelsu/\n' >> common/drivers/Makefile
         grep -q 'source "drivers/kernelsu/Kconfig"' common/drivers/Kconfig ||
           sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' common/drivers/Kconfig
-        # Next's Kbuild hard-errors at parse time while .config has neither KPROBES nor KSU_SUSFS
-        if [ -f "$DIR/kernel/Kbuild" ]; then
-          sed -i 's/$(error "KernelSU requires either CONFIG_KPROBES=y or CONFIG_KSU_SUSFS=y")/$(warning "KernelSU requires either CONFIG_KPROBES=y or CONFIG_KSU_SUSFS=y")/' "$DIR/kernel/Kbuild"
-        fi
-        # SukiSU builtin (1cfa5734) calls the SUSFS priority-uid-filter API, but its Kconfig predates
-        # the symbol that guards the prototype in linux/susfs.h, so the calls fail as implicit
-        # declarations. Define the symbol in the cloned tree (the SUSFS pin already implements it).
-        if [ "$VARIANT" = "sukisu" ] && [ -f "$DIR/kernel/Kconfig" ]; then
-          python3 - "$DIR/kernel/Kconfig" <<'PYEOF'
-        import sys
-        p = sys.argv[1]
-        s = open(p, encoding='utf-8').read()
-        if 'KSU_SUSFS_PRIORITY_UID_FILTER' in s:
-            print('Kconfig already defines KSU_SUSFS_PRIORITY_UID_FILTER')
-            raise SystemExit(0)
-        block = """
-        config KSU_SUSFS_PRIORITY_UID_FILTER
-            bool "KernelSU addon - SUSFS priority uid filter"
-            depends on KSU_SUSFS
-            default y
-        """
-        idx = s.find('\nendmenu')
-        if idx < 0:
-            sys.exit('KernelSU Kconfig: endmenu anchor not found')
-        open(p, 'w', encoding='utf-8').write(s[:idx] + block + s[idx:])
-        print('added CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER to the SukiSU Kconfig')
-        PYEOF
-        fi
         ls -l common/drivers/kernelsu
 
-    - name: Disable KSU volume-key safe mode
-      if: ${{ !inputs.clean_baseline && inputs.add_ksu && inputs.ksu_disable_safemode }}
+    - name: LSM slot for Baseband Guard (MAX_LSM_COUNT)
+      # MAX_LSM_COUNT is derived from the upstream LSM configs only and all 5 slots are used, so a static
+      # LSM such as Baseband Guard would make the kernel drop the last ordered LSM (bpf). Count it.
+      # KernelSU itself registers no LSM (it patches hooks at runtime), so it needs no slot.
+      if: ${{ inputs.add_bbg && !inputs.clean_baseline }}
       working-directory: ${{ env.KERNEL_ROOT }}
-      run: |
-        set -euo pipefail
-        if [ "${{ inputs.ksu_variant }}" = "kernelsu" ] || [ "${{ inputs.ksu_variant }}" = "next" ]; then
-          # official KernelSU and KernelSU-Next: runtime/ksud_integration.c counts vol-down presses; >= 3 = safe mode
-          F="$KSU_DIR/kernel/runtime/ksud_integration.c"
-          [ -f "$F" ] || { echo "::error::$F not found"; exit 1; }
-          OLD='    return count >= 3;'
-          [ "$(grep -cxF "$OLD" "$F")" = "1" ] || { echo "::error::expected exactly one '$OLD' in $F"; exit 1; }
-          sed -i 's/^    return count >= 3;$/    (void)count; return false; \/* volume-key safe mode disabled by build (ksu_disable_safemode) *\//' "$F"
-          grep -n 'safe mode disabled by build' "$F"
-          exit 0
-        fi
-        F="$KSU_DIR/kernel/runtime/ksud.c"
-        if [ ! -f "$F" ]; then F="$(grep -rl 'safe_mode_flag = true;' "$KSU_DIR/kernel" | head -1 || true)"; fi
-        [ -n "$F" ] && [ -f "$F" ] || { echo "::warning::no volume-key safe-mode code found in this root implementation (nothing to disable)"; exit 0; }
-        [ "$(grep -c 'safe_mode_flag = true;' "$F")" = "1" ] || { echo "::error::expected exactly one 'safe_mode_flag = true;' in $F"; exit 1; }
-        sed -i 's/safe_mode_flag = true;/(void)0; \/* volume-key safe mode disabled by build (ksu_disable_safemode) *\//' "$F"
-        grep -n 'safe mode disabled by build' "$F"
-
-    - name: LSM slots (MAX_LSM_COUNT) / SukiSU LSM registration
-      if: ${{ !inputs.clean_baseline }}
-      working-directory: ${{ env.KERNEL_ROOT }}
-      run: |
-        set -euo pipefail
-        SLOTS=()
-        if [ "${{ inputs.add_ksu }}" = "true" ] && grep -rqs 'security_add_hooks(ksu_hooks' "$KSU_DIR/kernel"; then
-          if [ "${{ inputs.lsm_mode }}" = "skip" ]; then
-            python3 - "$KSU_DIR/kernel/hook/lsm_hook.c" <<'PYEOF'
-        import sys
-        p = sys.argv[1]
-        s = open(p, encoding='utf-8').read()
-        old = 'security_add_hooks(ksu_hooks, ARRAY_SIZE(ksu_hooks), "ksu");'
-        if s.count(old) != 1:
-            sys.exit('lsm_hook.c: expected security_add_hooks call not found exactly once')
-        s = s.replace(old, '(void)ksu_hooks; pr_info("LSM registration skipped (lsm_mode=skip)\\n");', 1)
-        open(p, 'w', encoding='utf-8').write(s)
-        print('lsm_mode=skip: SukiSU LSM registration removed (mount-hide file_permission hook lost)')
-        PYEOF
-          else
-            # Linux 6.12 takes const struct lsm_id *, not the LSM name string. The slot is still
-            # needed (security_add_hooks consumes one), so patch the call site instead of skipping.
-            python3 - "$KSU_DIR/kernel/hook/lsm_hook.c" <<'PYEOF'
-        import sys
-        p = sys.argv[1]
-        s = open(p, encoding='utf-8').read()
-        if 'ksu_lsmid' in s:
-            print('SukiSU LSM registration already patched for 6.12')
-            raise SystemExit(0)
-        old = '#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)\n    security_add_hooks(ksu_hooks, ARRAY_SIZE(ksu_hooks), "ksu");\n#else\n'
-        new = '#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0)\n    security_add_hooks(ksu_hooks, ARRAY_SIZE(ksu_hooks), &ksu_lsmid);\n#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)\n    security_add_hooks(ksu_hooks, ARRAY_SIZE(ksu_hooks), "ksu");\n#else\n'
-        if s.count(old) != 1:
-            sys.exit('lsm_hook.c: 4.11+ security_add_hooks block not found exactly once')
-        s = s.replace(old, new, 1)
-        anchor = 'static struct security_hook_list ksu_hooks[] = {'
-        if s.count(anchor) != 1:
-            sys.exit('lsm_hook.c: ksu_hooks[] anchor not found exactly once')
-        decl = '#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0)\nstatic struct lsm_id ksu_lsmid = { .name = "ksu", .id = LSM_ID_UNDEF };\n#endif\n\n'
-        s = s.replace(anchor, decl + anchor, 1)
-        open(p, 'w', encoding='utf-8').write(s)
-        print('patched SukiSU LSM registration for kernel 6.12 (struct lsm_id)')
-        PYEOF
-            SLOTS+=(KSU=CONFIG_KSU)
-          fi
-        else
-          echo "root implementation does not call security_add_hooks(): no KSU slot needed"
-        fi
-        [ "${{ inputs.add_bbg }}" = "true" ] && SLOTS+=(BBG=CONFIG_BBG)
-        if [ ${#SLOTS[@]} -eq 0 ]; then echo "no extra LSM slots"; exit 0; fi
-        bash "$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/add-lsm-slots.sh" common "${SLOTS[@]}"
+      run: bash "$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/add-lsm-slots.sh" common BBG=CONFIG_BBG
 
     - name: Fix old-kernel compatibility helpers
       if: ${{ !inputs.clean_baseline }}
@@ -408,25 +256,16 @@ jobs:
         FIX_SCRIPT="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/fix-old-kernel-compat.sh"
         [ -f "$FIX_SCRIPT" ] && bash "$FIX_SCRIPT" "$KERNEL_ROOT/common" "$SUBLEVEL" || true
 
-    - name: Fetch SUSFS (paired with ${{ inputs.ksu_variant }}) + WildKernels SUSFS helpers
+    - name: Fetch SUSFS + WildKernels SUSFS helpers
       if: ${{ !inputs.clean_baseline && inputs.add_susfs && inputs.add_ksu }}
       env:
         SUSFS_OVERRIDE: ${{ inputs.susfs_commit }}
       run: |
         set -euo pipefail
-        case "${{ inputs.ksu_variant }}" in
-          kernelsu) PIN="$KERNELSU_SUSFS_PIN"; PICKS="" ;;
-          sukisu) PIN="$SUKISU_SUSFS_PIN"; PICKS="" ;;
-          next)   PIN="$NEXT_SUSFS_PIN";   PICKS="$NEXT_SUSFS_PICKS" ;;
-        esac
-        PIN="${SUSFS_OVERRIDE:-$PIN}"
+        PIN="${SUSFS_OVERRIDE:-$SUSFS_PIN}"
         S="$GITHUB_WORKSPACE/susfs4ksu"
         for i in 1 2 3 4 5; do git clone -b "$SUSFS_BRANCH" "$SUSFS_REPO" "$S" && break; rm -rf "$S"; sleep 8; done
         git -C "$S" checkout --detach "$PIN"
-        if [ -n "$PICKS" ]; then
-          git -C "$S" fetch https://gitlab.com/pershoot/susfs4ksu.git $PICKS
-          for c in $PICKS; do git -C "$S" cherry-pick "$c"; done
-        fi
         echo "SUSFS $(git -C "$S" log -1 --format='%h %cs %s') | $(grep -h 'define SUSFS_VERSION' "$S/kernel_patches/include/linux/susfs.h")"
         for i in 1 2 3 4 5; do git clone --no-checkout "$WK_REPO" "$GITHUB_WORKSPACE/wk" && break; rm -rf "$GITHUB_WORKSPACE/wk"; sleep 8; done
         git -C "$GITHUB_WORKSPACE/wk" checkout --detach "$WK_PIN"
@@ -479,10 +318,10 @@ jobs:
         # leave .rej, which the reject check below still catches
         echo "offset backups: $(find . -name '*.orig' | wc -l)"; find . -name '*.orig' -delete
 
-    - name: Enable SUSFS in official KernelSU (10_enable_susfs_for_ksu)
+    - name: Enable SUSFS in KernelSU (10_enable_susfs_for_ksu)
       # tiann/KernelSU main carries no SUSFS glue; susfs4ksu ships the KSU-side patch, paired
       # commit-for-commit with the SUSFS pin (same sequence as WildKernels' susfs action).
-      if: ${{ !inputs.clean_baseline && inputs.add_susfs && inputs.add_ksu && inputs.ksu_variant == 'kernelsu' }}
+      if: ${{ !inputs.clean_baseline && inputs.add_susfs && inputs.add_ksu }}
       working-directory: ${{ env.KERNEL_ROOT }}/${{ env.KSU_DIR }}
       run: |
         set -euo pipefail
@@ -545,14 +384,11 @@ jobs:
         FIX="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/fix-susfs-compat.sh"
         [ -f "$FIX" ] && bash "$FIX" . "$SUBLEVEL" "$ANDROID_VER" "$KERNEL_VER" "$KERNEL_PATCHES" || true
 
-    - name: Apply GKID feature groups
+    - name: Apply NTSync and the networking/filesystem configs
       if: ${{ !inputs.clean_baseline }}
       working-directory: ${{ env.KERNEL_ROOT }}/common
       env:
         GKID_NTSYNC: ${{ inputs.gkid_ntsync }}
-        GKID_DROIDSPACES: ${{ inputs.gkid_droidspaces }}
-        GKID_NETHUNTER: ${{ inputs.gkid_nethunter }}
-        GKID_BBRV3: ${{ inputs.gkid_bbrv3 }}
         GKID_NET: ${{ inputs.gkid_net }}
         GKID_NET_DEFAULTS: ${{ inputs.gkid_net_defaults }}
       run: bash "$GITHUB_WORKSPACE/scripts/gkid-extras.sh" . "$GITHUB_WORKSPACE/$VERSION_DIR/gkid" "$GKID_FRAGMENT" "$GKID_REPORT"
@@ -593,14 +429,6 @@ jobs:
         # GKID groups that applied cleanly (+ config-only groups)
         if [ -s "$GKID_FRAGMENT" ]; then cat "$GKID_FRAGMENT" >> "$DEFCONFIG_FRAGMENT"; fi
 
-        if [ "${{ inputs.susfs_profile }}" = "core" ]; then
-          for c in KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
-                   KSU_SUSFS_OPEN_REDIRECT; do
-            sed -i "/^CONFIG_${c}=/d;/^# CONFIG_${c} is not set/d" "$DEFCONFIG_FRAGMENT"
-            echo "# CONFIG_${c} is not set" >> "$DEFCONFIG_FRAGMENT"
-          done
-          echo "SUSFS profile: core"
-        fi
         # NoMount config (built-in; only if the driver was added)
         if [ "${{ inputs.add_nomount }}" = "true" ] && [ -f common/fs/nomount/Kconfig ]; then
           sed -i '/^CONFIG_NOMOUNT=/d;/^# CONFIG_NOMOUNT is not set/d' "$DEFCONFIG_FRAGMENT"
@@ -653,7 +481,7 @@ jobs:
           echo 'override LDFLAGS += --sysroot=/' >> common/tools/bpf/resolve_btfids/Makefile
         fi
         FRAG_ARG=""
-        [ -f "$DEFCONFIG_FRAGMENT" ] && FRAG_ARG="--defconfig_fragment=//common:arch/arm64/configs/sukisu_gki.fragment"
+        [ -f "$DEFCONFIG_FRAGMENT" ] && FRAG_ARG="--defconfig_fragment=//common:arch/arm64/configs/kernelsu_gki.fragment"
         echo "fragment arg: ${FRAG_ARG:-<none, stock config>}"
         tools/bazel build --config=fast --lto=none $FRAG_ARG \
           //common:kernel_aarch64_dist 2>&1 | tee "$GITHUB_WORKSPACE/bazel-build.log" || BUILD_RC=${PIPESTATUS[0]}
@@ -675,7 +503,7 @@ jobs:
         echo "--- version string:"
         strings -n 20 "$IMG" | grep -m1 'Linux version' || true
         echo "--- key features present in the binary:"
-        for s in susfs nomount kernelsu baseband_guard ntsync; do
+        for s in susfs nomount zeromount kernelsu baseband_guard ntsync; do
           printf '%-16s %s\n' "$s" "$(strings "$IMG" | grep -ci "$s")"
         done
         echo "--- vermagic flags in binary:"
@@ -690,6 +518,7 @@ jobs:
             WANT="$WANT CONFIG_KSU_SUSFS CONFIG_KSU_SUSFS_SUS_PATH CONFIG_KSU_SUSFS_SUS_MOUNT CONFIG_KSU_SUSFS_SUS_KSTAT CONFIG_KSU_SUSFS_SUS_MAP CONFIG_KSU_SUSFS_SPOOF_UNAME"
           fi
           [ "${{ inputs.add_nomount }}" = "true" ] && WANT="$WANT CONFIG_NOMOUNT"
+          [ "${{ inputs.add_zeromount }}" = "true" ] && WANT="$WANT CONFIG_ZEROMOUNT"
           [ "${{ inputs.add_bbg }}" = "true" ] && WANT="$WANT CONFIG_BBG"
           [ "${{ inputs.gkid_ntsync }}" = "true" ] && WANT="$WANT CONFIG_NTSYNC"
           [ "${{ inputs.add_cifs }}" = "true" ] && WANT="$WANT CONFIG_CIFS CONFIG_NETFS_SUPPORT"
