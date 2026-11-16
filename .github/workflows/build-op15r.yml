@@ -1,7 +1,7 @@
 name: OnePlus 15R kernel
 
 # Rebuilds the exact GKI kernel the phone ships for a given firmware (Google kernel/common
-# release tag) with official KernelSU built in, plus SUSFS, NoMount, ZeroMount, Baseband Guard, NTSync,
+# release tag) with SukiSU Ultra built in, plus SUSFS, NoMount, ZeroMount, Baseband Guard, NTSync,
 # the networking/filesystem configs and CIFS. To target a new firmware, read `uname -r` on the
 # phone (the g<sha> part), find the matching android16-6.12-<YYYY-MM>_r<N> tag and pass it as
 # common_ref / release_branch.
@@ -57,15 +57,19 @@ on:
         type: boolean
         default: true
       ksu_commit:
-        description: "Override the KernelSU commit (40-char sha; empty = pin from root-pins.env)"
+        description: "Override the SukiSU Ultra commit (40-char sha; empty = pin from root-pins.env)"
         type: string
         default: ""
+      ksu_disable_safemode:
+        description: "Disable SukiSU's volume-key 'safe mode' (vol-down presses during boot disable all modules). Built-in SukiSU registers the key handler at kernel start, unlike an LKM."
+        type: boolean
+        default: true
       susfs_commit:
         description: "Override the SUSFS commit (empty = pin from root-pins.env)"
         type: string
         default: ""
       add_ksu:
-        description: "KernelSU built into the kernel (off = root only via external LKM)"
+        description: "SukiSU Ultra built into the kernel (off = root only via external LKM)"
         type: boolean
         default: true
       add_susfs:
@@ -90,7 +94,7 @@ permissions:
 
 jobs:
   build:
-    name: "KernelSU + SUSFS + NoMount + ZeroMount"
+    name: "SukiSU Ultra + SUSFS + NoMount + ZeroMount"
     runs-on: ubuntu-latest
     timeout-minutes: 240
     env:
@@ -175,7 +179,7 @@ jobs:
         if [ "${{ inputs.clean_baseline }}" = "true" ]; then
           echo "ARTIFACT_BASE=OP15R-${KERNEL_VER}.${SL}-CLEAN-infra-${{ inputs.infra_tweaks }}" >> "$GITHUB_ENV"
         else
-          ROOT=KernelSU
+          ROOT=SukiSU
           [ "${{ inputs.add_ksu }}" = "true" ] || ROOT=NoKSU
           echo "ROOT_LABEL=$ROOT" >> "$GITHUB_ENV"
           SUF=""
@@ -201,20 +205,20 @@ jobs:
     - name: Load source pins
       run: |
         set -a; . "$GITHUB_WORKSPACE/$VERSION_DIR/root-pins.env"; set +a
-        for v in KERNELSU_REPO KERNELSU_PIN SUSFS_REPO SUSFS_BRANCH SUSFS_PIN WK_REPO WK_PIN; do
+        for v in SUKISU_REPO SUKISU_PIN SUSFS_REPO SUSFS_BRANCH SUSFS_PIN WK_REPO WK_PIN; do
           echo "$v=${!v}" >> "$GITHUB_ENV"
         done
 
-    - name: Integrate KernelSU
+    - name: Integrate SukiSU Ultra
       if: ${{ !inputs.clean_baseline && inputs.add_ksu }}
       working-directory: ${{ env.KERNEL_ROOT }}
       env:
         KSU_OVERRIDE: ${{ inputs.ksu_commit }}
       run: |
         set -euo pipefail
-        REPO="$KERNELSU_REPO"; DIR=ksu-tiann
-        PIN="${KSU_OVERRIDE:-$KERNELSU_PIN}"
-        [[ "$PIN" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::KernelSU commit must be a full 40-char sha"; exit 1; }
+        REPO="$SUKISU_REPO"; DIR=ksu-sukisu
+        PIN="${KSU_OVERRIDE:-$SUKISU_PIN}"
+        [[ "$PIN" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::SukiSU commit must be a full 40-char sha"; exit 1; }
         [ ! -e common/drivers/kernelsu ] || { echo "::error::common/drivers/kernelsu already exists"; exit 1; }
         [ ! -e "$DIR" ] || { echo "::error::$KERNEL_ROOT/$DIR already exists"; exit 1; }
         echo "KSU_DIR=$DIR" >> "$GITHUB_ENV"
@@ -222,18 +226,23 @@ jobs:
         for i in 1 2 3 4 5; do git clone --no-checkout "$REPO" "$DIR" && break; rm -rf "./$DIR"; sleep 8; done
         git -C "$DIR" fetch origin "$PIN"
         git -C "$DIR" checkout --detach "$PIN"
-        [ "$(git -C "$DIR" rev-parse HEAD)" = "$PIN" ] || { echo "::error::KernelSU commit mismatch"; exit 1; }
-        # Deterministic KSU_VERSION: 30000 + commits at the merge-base with main. KernelSU's Kbuild runs
-        # `git rev-list --count HEAD` inside GIT_ROOT; inside the Kleaf sandbox .git may be unreachable and
-        # the version silently becomes 16 (the manager then reports "kernel too old"), so pin the count.
-        BASE="$(git -C "$DIR" merge-base HEAD origin/main 2>/dev/null || echo "$PIN")"
-        COUNT="$(git -C "$DIR" rev-list --count "$BASE")"
-        TAG="$(git -C "$DIR" describe --tags --abbrev=0 "$BASE" 2>/dev/null || echo unknown)"
-        KB="$DIR/kernel/Kbuild"
-        [ "$(grep -c '^ifdef KSU_GIT_VERSION_VALID' "$KB")" = "1" ] || { echo "::error::KernelSU Kbuild version anchor not found"; exit 1; }
-        sed -i "s/^ifdef KSU_GIT_VERSION_VALID/# CI: deterministic KSU_VERSION\nKSU_GIT_VERSION := ${COUNT}\nKSU_GIT_VERSION_VALID := 1\nifdef KSU_GIT_VERSION_VALID/" "$KB"
-        grep -n -A2 'CI: deterministic KSU_VERSION' "$KB"
-        echo "$DIR @ $(git -C "$DIR" log -1 --format='%h %cs %s') | KSU_VERSION=$((30000 + COUNT)) tag=$TAG"
+        [ "$(git -C "$DIR" rev-parse HEAD)" = "$PIN" ] || { echo "::error::SukiSU commit mismatch"; exit 1; }
+        # Deterministic KSU_VERSION. SukiSU's Makefile asks the GitHub API (curl) and counts the commits of
+        # `main`; neither is reliable inside the Kleaf sandbox (the fallback is 13000 and the manager would
+        # report "kernel too old"). Pin 30000 + commits(main) - 4001, the same formula, outside the sandbox.
+        COUNT="$(git -C "$DIR" rev-list --count origin/main)"
+        TAG="$(git -C "$DIR" describe --tags --abbrev=0 origin/main 2>/dev/null | sed 's/^v//' || true)"
+        TAG="${TAG:-3.0.0}"
+        KV=$((30000 + COUNT - 4001))
+        MK="$DIR/kernel/Makefile"
+        for k in KSU_VERSION KSU_GITHUB_VER GITHUB_COMMITS; do
+          [ "$(grep -cE "^${k}[[:space:]]*:=" "$MK")" = "1" ] || { echo "::error::SukiSU Makefile anchor $k not found exactly once"; exit 1; }
+        done
+        sed -i -E "s|^KSU_VERSION[[:space:]]*:=.*|KSU_VERSION := ${KV}|" "$MK"
+        sed -i -E "s|^KSU_GITHUB_VER[[:space:]]*:=.*|KSU_GITHUB_VER := ${TAG}|" "$MK"
+        sed -i -E "s|^GITHUB_COMMITS[[:space:]]*:=.*|GITHUB_COMMITS :=|" "$MK"
+        grep -nE '^(KSU_VERSION|KSU_GITHUB_VER|GITHUB_COMMITS)[[:space:]]*:=' "$MK"
+        echo "$DIR @ $(git -C "$DIR" log -1 --format='%h %cs %s') | KSU_VERSION=$KV (main has $COUNT commits) tag=$TAG"
         ln -s "$(realpath --relative-to=common/drivers "$PWD/$DIR/kernel")" common/drivers/kernelsu
         grep -q 'obj-$(CONFIG_KSU) += kernelsu/' common/drivers/Makefile ||
           printf '\nobj-$(CONFIG_KSU) += kernelsu/\n' >> common/drivers/Makefile
@@ -241,13 +250,58 @@ jobs:
           sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' common/drivers/Kconfig
         ls -l common/drivers/kernelsu
 
-    - name: LSM slot for Baseband Guard (MAX_LSM_COUNT)
-      # MAX_LSM_COUNT is derived from the upstream LSM configs only and all 5 slots are used, so a static
-      # LSM such as Baseband Guard would make the kernel drop the last ordered LSM (bpf). Count it.
-      # KernelSU itself registers no LSM (it patches hooks at runtime), so it needs no slot.
-      if: ${{ inputs.add_bbg && !inputs.clean_baseline }}
+    - name: Disable SukiSU volume-key safe mode
+      # Built-in SukiSU registers the volume-key handler at kernel start (an LKM does not): enough vol-down
+      # presses during boot would disable every module.
+      if: ${{ !inputs.clean_baseline && inputs.add_ksu && inputs.ksu_disable_safemode }}
       working-directory: ${{ env.KERNEL_ROOT }}
-      run: bash "$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/add-lsm-slots.sh" common BBG=CONFIG_BBG
+      run: |
+        set -euo pipefail
+        F="$KSU_DIR/kernel/runtime/ksud.c"
+        [ -f "$F" ] || { echo "::error::$F not found"; exit 1; }
+        [ "$(grep -c 'safe_mode_flag = true;' "$F")" = "1" ] || { echo "::error::expected exactly one 'safe_mode_flag = true;' in $F"; exit 1; }
+        sed -i 's/safe_mode_flag = true;/(void)0; \/* volume-key safe mode disabled by build (ksu_disable_safemode) *\//' "$F"
+        grep -n 'safe mode disabled by build' "$F"
+
+    - name: LSM slots (MAX_LSM_COUNT) and SukiSU LSM registration
+      # MAX_LSM_COUNT is derived from the upstream LSM configs only and all 5 slots are used. SukiSU registers an
+      # LSM with security_add_hooks() (a 6th one panics the kernel at boot: "Too many LSMs registered"), and a
+      # static LSM such as Baseband Guard would make the kernel drop the last ordered LSM (bpf). Count both.
+      if: ${{ !inputs.clean_baseline }}
+      working-directory: ${{ env.KERNEL_ROOT }}
+      run: |
+        set -euo pipefail
+        SLOTS=()
+        if [ "${{ inputs.add_ksu }}" = "true" ] && grep -rqs 'security_add_hooks(ksu_hooks' "$KSU_DIR/kernel"; then
+          # Linux 6.12 takes const struct lsm_id *, not the LSM name string. The slot is still needed
+          # (security_add_hooks consumes one), so patch the call site.
+          python3 - "$KSU_DIR/kernel/hook/lsm_hook.c" <<'PYEOF'
+        import sys
+        p = sys.argv[1]
+        s = open(p, encoding='utf-8').read()
+        if 'ksu_lsmid' in s:
+            print('SukiSU LSM registration already patched for 6.12')
+            raise SystemExit(0)
+        old = '#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)\n    security_add_hooks(ksu_hooks, ARRAY_SIZE(ksu_hooks), "ksu");\n#else\n'
+        new = '#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0)\n    security_add_hooks(ksu_hooks, ARRAY_SIZE(ksu_hooks), &ksu_lsmid);\n#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)\n    security_add_hooks(ksu_hooks, ARRAY_SIZE(ksu_hooks), "ksu");\n#else\n'
+        if s.count(old) != 1:
+            sys.exit('lsm_hook.c: 4.11+ security_add_hooks block not found exactly once')
+        s = s.replace(old, new, 1)
+        anchor = 'static struct security_hook_list ksu_hooks[] = {'
+        if s.count(anchor) != 1:
+            sys.exit('lsm_hook.c: ksu_hooks[] anchor not found exactly once')
+        decl = '#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0)\nstatic struct lsm_id ksu_lsmid = { .name = "ksu", .id = LSM_ID_UNDEF };\n#endif\n\n'
+        s = s.replace(anchor, decl + anchor, 1)
+        open(p, 'w', encoding='utf-8').write(s)
+        print('patched SukiSU LSM registration for kernel 6.12 (struct lsm_id)')
+        PYEOF
+          SLOTS+=(KSU=CONFIG_KSU)
+        else
+          echo "SukiSU registers no LSM here: no KSU slot needed"
+        fi
+        [ "${{ inputs.add_bbg }}" = "true" ] && SLOTS+=(BBG=CONFIG_BBG)
+        if [ ${#SLOTS[@]} -eq 0 ]; then echo "no extra LSM slots"; exit 0; fi
+        bash "$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/add-lsm-slots.sh" common "${SLOTS[@]}"
 
     - name: Fix old-kernel compatibility helpers
       if: ${{ !inputs.clean_baseline }}
@@ -325,19 +379,13 @@ jobs:
       working-directory: ${{ env.KERNEL_ROOT }}/common
       run: patch -p1 -F0 --forward --no-backup-if-mismatch < "$GITHUB_WORKSPACE/$VERSION_DIR/zeromount/60_zeromount-${ANDROID_VER}-${KERNEL_VER}.patch"
 
-    - name: Enable SUSFS in KernelSU (10_enable_susfs_for_ksu)
-      # tiann/KernelSU main carries no SUSFS glue; susfs4ksu ships the KSU-side patch, paired
-      # commit-for-commit with the SUSFS pin (same sequence as WildKernels' susfs action).
+    - name: Check SUSFS integration in SukiSU Ultra
+      # SukiSU Ultra ships its SUSFS glue; susfs4ksu's kernel patch is applied separately above.
       if: ${{ !inputs.clean_baseline && inputs.add_susfs && inputs.add_ksu }}
       working-directory: ${{ env.KERNEL_ROOT }}/${{ env.KSU_DIR }}
       run: |
         set -euo pipefail
-        P="$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch"
-        [ -f "$P" ] || { echo "::error::missing $P"; exit 1; }
-        patch -p1 --forward --no-backup-if-mismatch < "$P"
-        grep -q '^config KSU_SUSFS$' kernel/Kconfig || { echo "::error::KSU_SUSFS not defined after the enable patch"; exit 1; }
-        # selinux_hide.c on 6.6+ clang: bare `if (fn)` on a function/pointer is -Werror
-        # (WildKernels "Fix selinux_hide pointer-bool-conversion", ported verbatim)
+        grep -q '^config KSU_SUSFS$' kernel/Kconfig || { echo "::error::KSU_SUSFS is not defined by SukiSU Ultra"; exit 1; }
         for f in $(find kernel -name selinux_hide.c); do
           if grep -q "extern void security_dump_masked_av_fn" "$f"; then
             sed -i 's/if (security_dump_masked_av_fn)/if (\&security_dump_masked_av_fn)/g; s/if (security_dump_masked_av_fn != NULL)/if (\&security_dump_masked_av_fn != NULL)/g; s/if (context_struct_compute_av_fn)/if (\&context_struct_compute_av_fn)/g; s/if (context_struct_compute_av_fn != NULL)/if (\&context_struct_compute_av_fn != NULL)/g' "$f"
@@ -347,12 +395,6 @@ jobs:
             echo "patched $f (pointer form)"
           fi
         done
-        # a registered KSU LSM (security_add_hooks) needs an LSM slot; that was the old boot panic.
-        # Official KernelSU patches hooks at runtime, so none may appear even after the patch.
-        if grep -rn 'security_add_hooks(' kernel --include='*.c' | grep -v '^\s*//'; then
-          echo "::error::KernelSU registers an LSM via security_add_hooks - needs an LSM slot (add to the LSM step)"; exit 1
-        fi
-        echo "no security_add_hooks() in KernelSU: only BBG needs an LSM slot"
 
     - name: Add NoMount (fs/nomount, built-in)
       # NoMount is a self-contained driver (own inode/dir ops, no hooks in core VFS files), so it
